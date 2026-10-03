@@ -1,0 +1,69 @@
+name: Publish release
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/release.yml]
+permissions:
+  contents: write
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version and build integration archive
+        id: package
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, zipfile
+          from pathlib import Path
+          root = Path("custom_components/sharp_life_air")
+          version = json.loads((root / "manifest.json").read_text())["version"]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"tag=v{version}\n")
+          with zipfile.ZipFile("sharp_life_air.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+              for path in sorted(root.rglob("*")):
+                  if path.is_file() and "__pycache__" not in path.parts:
+                      archive.write(path, str(path))
+          PY
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.package.outputs.tag }}
+        shell: bash
+        run: |
+          cat > release-notes.md <<'NOTES'
+          First experimental Home Assistant integration for Sharp Life AIR EU.
+
+          - UI configuration and reauthentication.
+          - Power, preset modes and humidification control.
+          - Temperature, humidity, power, energy and diagnostic sensors.
+          - Local icons and logos for light and dark themes, including high-resolution variants.
+
+          KI-TX100EU readings were confirmed with the standalone API script. The Home Assistant component and control commands still require testing on the device.
+
+          Install through HACS using this repository as a custom Integration repository, then restart Home Assistant and add Sharp Life AIR under Settings > Devices & services. Local brand images require Home Assistant 2026.3 or newer.
+
+          For manual installation, extract sharp_life_air.zip into /config.
+          NOTES
+          python - <<'PY'
+          import json, os, urllib.request, urllib.error
+          tag = os.environ["RELEASE_TAG"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+              headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                       "Accept": "application/vnd.github+json"})
+          try:
+              with urllib.request.urlopen(request) as response:
+                  json.load(response)
+              raise SystemExit("Release already exists; refusing to replace it")
+          except urllib.error.HTTPError as error:
+              if error.code != 404:
+                  raise
+          PY
+          gh release create "$RELEASE_TAG" sharp_life_air.zip --target "$GITHUB_SHA" --title "Sharp Life AIR $RELEASE_TAG" --notes-file release-notes.md
