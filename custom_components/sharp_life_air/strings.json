@@ -1,0 +1,31 @@
+{
+  "title": "Sharp Life AIR",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sharp Life AIR",
+        "description": "Sign in with your Sharp Life AIR EU account.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Sharp Life AIR",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid credentials",
+      "cannot_connect": "Unable to connect to Sharp",
+      "no_devices": "No devices found"
+    },
+    "abort": {
+      "already_configured": "Account already configured",
+      "reauth_successful": "Authentication updated",
+      "unique_id_mismatch": "Account does not match"
+    }
+  }
+}

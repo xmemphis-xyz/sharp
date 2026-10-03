@@ -1,0 +1,16 @@
+{
+  "domain": "sharp_life_air",
+  "name": "Sharp Life AIR",
+  "version": "0.1.0",
+  "config_flow": true,
+  "documentation": "https://github.com/xmemphis-xyz/sharp",
+  "issue_tracker": "https://github.com/xmemphis-xyz/sharp/issues",
+  "codeowners": [
+    "@xmemphis-xyz"
+  ],
+  "requirements": [
+    "aiosharp-cocoro-air==0.2.0"
+  ],
+  "iot_class": "cloud_polling",
+  "integration_type": "hub"
+}
