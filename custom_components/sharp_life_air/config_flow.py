@@ -1,7 +1,9 @@
 """Configure Sharp Life AIR."""
+from .api import SharpLifeAirClient
+
 import asyncio
 import voluptuous as vol
-from aiosharp_cocoro_air import SharpCOCOROAir, SharpAuthError, SharpApiError, SharpConnectionError
+from aiosharp_cocoro_air import SharpAuthError, SharpApiError, SharpConnectionError
 from homeassistant import config_entries
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from .const import DOMAIN
@@ -16,7 +18,7 @@ class SharpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_EMAIL] = user_input[CONF_EMAIL].strip()
             try:
                 async with asyncio.timeout(90):
-                    async with SharpCOCOROAir(user_input[CONF_EMAIL], user_input[CONF_PASSWORD]) as client:
+                    async with SharpLifeAirClient(user_input[CONF_EMAIL], user_input[CONF_PASSWORD]) as client:
                         await client.authenticate()
                         devices = await client.get_devices()
                         account_id = client.user_id or user_input[CONF_EMAIL].casefold()
@@ -44,7 +46,7 @@ class SharpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 async with asyncio.timeout(90):
-                    async with SharpCOCOROAir(entry.data[CONF_EMAIL], user_input[CONF_PASSWORD]) as client:
+                    async with SharpLifeAirClient(entry.data[CONF_EMAIL], user_input[CONF_PASSWORD]) as client:
                         await client.authenticate()
                         account_id = client.user_id or entry.data[CONF_EMAIL].casefold()
                 await self.async_set_unique_id(str(account_id))

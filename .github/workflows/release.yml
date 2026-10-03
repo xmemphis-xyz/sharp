@@ -37,12 +37,12 @@ jobs:
         shell: bash
         run: |
           cat > release-notes.md <<'NOTES'
-          Sharp Life AIR: updated application branding.
+          Sharp Life AIR: fix startup failure caused by empty ECHONET properties.
 
           - UI configuration and reauthentication.
           - Power, preset modes and humidification control.
           - Temperature, humidity, power, energy and diagnostic sensors.
-          - Replaced icons and logos with the Sharp Life AIR graphic supplied by the user.
+          - Ignore empty ECHONET values without inventing sensor states. Fixes index out of range during startup and polling.
 
           KI-TX100EU readings were confirmed with the standalone API script. The Home Assistant component and control commands still require testing on the device.
 

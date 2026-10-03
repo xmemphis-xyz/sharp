@@ -1,8 +1,10 @@
 """Polling and serialized commands."""
+from .api import SharpLifeAirClient
+
 import asyncio
 import logging
 from datetime import timedelta
-from aiosharp_cocoro_air import SharpCOCOROAir, SharpAuthError, SharpApiError, SharpConnectionError
+from aiosharp_cocoro_air import SharpAuthError, SharpApiError, SharpConnectionError
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -13,7 +15,7 @@ class SharpCoordinator(DataUpdateCoordinator):
         super().__init__(hass, logging.getLogger(__name__), name="Sharp Life AIR",
                          config_entry=entry, update_interval=timedelta(seconds=60))
         # The API relies on cookies; isolate these from HA's shared session.
-        self.client = SharpCOCOROAir(entry.data["email"], entry.data["password"])
+        self.client = SharpLifeAirClient(entry.data["email"], entry.data["password"])
         self.lock = asyncio.Lock()
         self.authenticated = False
 
