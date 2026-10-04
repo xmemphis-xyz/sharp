@@ -54,26 +54,42 @@ returned ID to complete. Malformed acknowledgements now identify the endpoint,
 response/list type, entry count and a recognized protocol error code, without
 logging raw data or identifiers. The reported KI-TX100EU failure did not expose
 the actual response structure, so on-device confirmation is still required.
-Version 0.1.8 sends only standard EPC 80 for power on/off, omitting the additional
-proprietary F3 field. This is a compatibility test prompted by the user's
-`controlResult: status=error, errorCode=E1004003`; the error code's exact meaning
-and whether F3 caused it have not been established. Mode and humidification
-remain F3 controls and are not considered physically verified.
+Power commands retain v0.1.8's standard EPC 80 payload. The user still received
+`controlResult: status=error, errorCode=E1004003; fields=80` on that version, so
+removing F3 did not resolve the reported failure. Its exact documented meaning
+has not been established. Mode and humidification remain F3 controls.
 If control fails or readings appear stale, use **Download diagnostics** from
 the integration entry menu. It reads deviceProperty and deviceStatus and exports
-only capability flags, known field types/presence/lengths, server update time
-and numeric readings. It omits configuration, credentials, IDs, raw values and
-server messages. A timestamp without a timezone is left unchanged.
+only capability flags, known field types/presence/lengths, server update time,
+registerLevel, numeric readings and pairing metadata. Pairing metadata includes
+pairingFlag, maxFlag, pairedTerminalNum, whether this HA terminal is listed and
+uses the EU app descriptor, and a valid box timezone. It omits configuration,
+credentials, IDs, raw values and server messages. A timestamp without a timezone
+is left unchanged.
 Version 0.1.5 corrects the pinned library's F3 update masks for power, mode and
 humidification using the Life AIR 1.0.4 APK. Failures now identify the endpoint
 and cloud error code/status. An uncertain result also schedules a state refresh.
 Energy is not yet enabled for Energy Dashboard totals because counter behavior
 is unverified. No decoded PM2.5 concentration is provided by this library.
 
-Authentication registers a Home Assistant terminal with Sharp. The upstream
-library cleans up older Home Assistant terminal registrations, so avoid running
-the standalone test concurrently with the integration or multiple HA instances
-on the same Sharp account.
+Version 0.1.9 fixes registration and pairing handling. Authentication keeps a
+stable terminal identity in the existing HA config entry, including across
+restart, setup retry and reauthentication. Registration uses the EU descriptor
+from the Life AIR 1.0.4 app and rejects API errors in HTTP-success responses.
+Before each deviceControl write, HA checks the current pairingFlag. If necessary
+it requests pairing once and reads boxInfo again; a successful HTTP response
+without confirmed pairing cannot authorize a device write. Pairing failures
+during login are logged while valid sensor reads remain available.
+
+The integration never automatically removes another terminal's registration.
+If the server reports its terminal limit, it raises an explicit action error.
+Keep the existing integration when updating; deleting it loses its saved identity.
+The standalone test script still uses upstream authentication, which deletes
+older HA registrations: avoid running it alongside the integration.
+
+These are confirmed code defects, but their connection to E1004003 remains a
+hypothesis until a physical test. Update in HACS, restart Home Assistant and
+test power-off once. If it fails, send the action error and new diagnostics.
 
 ## First device test
 

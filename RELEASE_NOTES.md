@@ -1,13 +1,17 @@
-Sharp Life AIR 0.1.8 simplifies power commands and adds cloud capability/freshness diagnostics for the KI-TX100EU control failure.
+Sharp Life AIR 0.1.9 fixes client registration and pairing handling for HA control.
 
-Power on/off now sends only standard EPC 80, code 30/31, instead of combining it with the proprietary F3 power field. Command acknowledgement and result validation remain mandatory. An execution error identifies the requested field codes. Uncertain writes are never automatically repeated.
+The integration now retains terminalAppId in the existing config entry across restart, setup retry and reauthentication. Initial setup and subsequent operation use the same identity. Previously the dependency allocated a new identity on every login, ignored pairing failures and deleted other HA or unnamed terminal registrations.
 
-The reported 0.1.7 error is controlResult: status=error, errorCode=E1004003. The code's exact documented meaning has not been established. Removing the supplementary F3 command tests a possible compatibility issue; this is not a confirmed device fix. Mode and humidification controls remain unchanged and require physical verification.
+Registration uses the EU descriptor from the Life AIR 1.0.4 app. Registration, pairing and ordinary API calls reject top-level errorCode responses even when HTTP succeeds. No other terminal registrations are automatically removed. Pairing failures during login are reported while valid sensor reads remain available.
 
-Download diagnostics is now available in the integration entry menu. When requested, it reads deviceProperty and deviceStatus with a five-second timeout per request. The output includes known field capabilities, presence and byte lengths, server update timestamps and numeric humidity/temperature/power readings. Credentials, configuration, identifiers, raw cloud payloads and arbitrary error messages are omitted. Naive server timestamps are not assigned an assumed timezone.
+Before each deviceControl write, HA reads current pairingFlag. If unpaired, it requests pairing once and reads boxInfo again. If pairing is rejected, the terminal limit is reached or readback does not confirm pairing, no device command is sent. Accepted device commands still require matching successful controlResult entries. Uncertain control writes are never repeated automatically.
 
-Update to 0.1.8 in HACS and restart Home Assistant. Keep the existing integration configuration. Try power-off once and check the physical purifier. If it still fails, send the new command error and Download diagnostics from Settings > Devices & services > Sharp Life AIR > the integration entry menu. The diagnostics also help investigate the remaining 50% humidity reading and unknown operation mode.
+Download diagnostics now includes pairing flags, bounded terminal count, whether the current HA terminal is listed with the EU descriptor, registerLevel and validated box timezone. It still omits credentials, config data, terminal/device/command IDs, names, raw payloads and arbitrary server messages. Downloading diagnostics performs reads only.
 
-44 regression tests pass, covering standard-only power requests, the observed E1004003 execution failure, acknowledgement/result validation, no automatic retries, status parsing and diagnostic privacy. Device operation remains to be confirmed.
+The reported v0.1.8 error remains controlResult: status=error, errorCode=E1004003; fields=80. Removing F3 did not fix it. These registration defects are confirmed in code, but their role in E1004003 is not confirmed. The error code's exact documented meaning is unknown, and physical-device control still requires testing.
+
+Update to 0.1.9 in HACS and restart Home Assistant. Keep the existing integration; it will save its terminal identity automatically. Try power-off once and check the physical purifier. If it fails, send the complete action error and new Download diagnostics from Settings > Devices & services > Sharp Life AIR > integration entry menu.
+
+67 regression tests pass. Local HTTP tests cover stable identity, registration and pairing rejection, terminal limits, readback, control completion and no repeated device writes. Identity-storage tests exercise flow/coordinator code with small HA interface doubles; they are not a full HA runtime or physical-device test.
 
 For manual installation, extract sharp_life_air.zip into /config.

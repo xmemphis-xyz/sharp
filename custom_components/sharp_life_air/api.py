@@ -1,14 +1,34 @@
 """Sharp EU cloud adapter, matching the Life AIR 1.0.4 APK."""
 import asyncio
+import json
 import logging
 import re
 from dataclasses import replace
+from urllib.parse import urlencode
 
-from aiosharp_cocoro_air import SharpCOCOROAir, SharpApiError, decode_echonet_property
+import aiohttp
+from aiosharp_cocoro_air import (
+    SharpCOCOROAir, SharpApiError, SharpAuthError, SharpConnectionError,
+    decode_echonet_property,
+)
+from aiosharp_cocoro_air.api import API_BASE, APP_SECRET
+from aiosharp_cocoro_air.auth import async_obtain_auth_code
 from aiosharp_cocoro_air.models import DeviceProperties
 
 _LOGGER = logging.getLogger(__name__)
 _STATUS_CODES = {0x80, 0x84, 0x85, 0x88, 0x8B, 0xA0, 0xC0, 0xF1, 0xF3}
+_APP_NAME = "spremote_a_eu:1:1.0.4"
+
+
+def check_api_response(response, endpoint):
+    """An HTTP success can still contain a Sharp API error."""
+    if not isinstance(response, dict):
+        raise SharpApiError(f"{endpoint}: invalid API response")
+    code = response.get("errorCode")
+    if code not in (None, "", "null"):
+        safe = str(code) if re.fullmatch(r"(?:E[0-9]{7}|[0-9]{3})", str(code)) else "unknown"
+        raise SharpApiError(f"{endpoint}: errorCode={safe}")
+    return response
 
 
 def error_code(value):
@@ -143,16 +163,115 @@ def sanitize_properties(value: str | None) -> str:
 class SharpLifeAirClient(SharpCOCOROAir):
     """Adapt the pinned library without modifying its global decoder."""
 
+    def __init__(self, email, password, session=None, *, terminal_app_id=None):
+        super().__init__(email, password, session)
+        self._terminal_app_id = terminal_app_id
+        self._pairing_errors = {}
+
+    @property
+    def terminal_app_id(self):
+        """Private identity for HA configuration storage, never diagnostics."""
+        return self._terminal_app_id
+
+    async def authenticate(self):
+        # The APK retains this identity. Allocating another on each HA login
+        # fills pairing slots and disconnects other clients during cleanup.
+        if self._terminal_app_id is None:
+            response = await self._hms_request("setting/terminalAppId/")
+            value = response.get("terminalAppId")
+            if not isinstance(value, str) or not value.strip() or len(value) > 512:
+                raise SharpApiError("setting/terminalAppId/: invalid terminal identity")
+            self._terminal_app_id = value
+        auth_code, nonce = await async_obtain_auth_code(self._email, self._password)
+        await self._hms_request("setting/login/", method="POST", body={
+            "terminalAppId": self._terminal_app_id, "tempAccToken": auth_code,
+            "password": nonce,
+        }, extra_params={"serviceName": "sharp-eu"})
+        info = await self._hms_request("setting/userInfo", extra_params={
+            "terminalAppId": self._terminal_app_id,
+        })
+        self._user_id = info.get("userId")
+        await self._register_terminal()
+        await self._pair_boxes()
+
+    async def _setting_post(self, path, *, body=None, extra_params=None):
+        """Read and validate registration/pairing responses without logging IDs."""
+        params = {"appSecret": APP_SECRET, **(extra_params or {})}
+        url = f"{API_BASE}{path}?{urlencode(params)}"
+        try:
+            async with await self._ensure_session().post(url, json=body) as response:
+                if response.status in (401, 403):
+                    raise SharpAuthError(f"{path}: authentication rejected")
+                if response.status not in (200, 201):
+                    raise SharpApiError(f"{path}: HTTP {response.status}")
+                payload = await response.text()
+                try:
+                    data = json.loads(payload) if payload else {}
+                except ValueError:
+                    raise SharpApiError(f"{path}: invalid JSON response") from None
+                return check_api_response(data, path)
+        except aiohttp.ClientError:
+            raise SharpConnectionError(f"{path}: connection failed") from None
+
+    async def _register_terminal(self):
+        # Official EU descriptor from o5.t0 / b6.p.A in Life AIR 1.0.4.
+        await self._setting_post("setting/terminal", body={
+            "name": "HomeAssistant", "os": "Android", "osVersion": "14",
+            "pushId": "", "appName": _APP_NAME,
+        })
+
+    async def _pair_box(self, box):
+        if box.get("maxFlag") is True:
+            raise SharpApiError("setting/pairing/: terminal limit reached")
+        await self._setting_post("setting/pairing/", extra_params={
+            "boxId": box["boxId"], "houseFlag": "true",
+        })
+
+    async def _pair_boxes(self):
+        # Never delete registrations belonging to another HA instance or app.
+        boxes = await self._get_boxes()
+        self._pairing_errors.clear()
+        for box in boxes["box"]:
+            if box.get("pairingFlag") is True:
+                continue
+            try:
+                await self._pair_box(box)
+            except (SharpApiError, SharpConnectionError, TimeoutError) as err:
+                # Keep valid sensor reads available, but expose the failure and
+                # require fresh, confirmed pairing before any device write.
+                detail = str(err) if isinstance(err, SharpApiError) else "connection or timeout"
+                self._pairing_errors[box["boxId"]] = detail
+                _LOGGER.warning("Sharp pairing failed: %s", detail)
+
+    async def _ensure_paired(self, device):
+        """The official app requires pairingFlag; discovery alone is not enough."""
+        boxes = await self._get_boxes()
+        box = next((box for box in boxes["box"] if box["boxId"] == device.box_id), None)
+        if box is None:
+            raise SharpApiError("setting/boxInfo: command device is missing")
+        if box.get("pairingFlag") is not True:
+            await self._pair_box(box)
+            boxes = await self._get_boxes()
+            box = next((box for box in boxes["box"] if box["boxId"] == device.box_id), None)
+            if box is None or box.get("pairingFlag") is not True:
+                raise SharpApiError("setting/pairing/: pairing not confirmed; device command not sent")
+        self._pairing_errors.pop(device.box_id, None)
+
     async def _hms_request(self, path, *args, **kwargs):
         try:
-            return await super()._hms_request(path, *args, **kwargs)
-        except ValueError as err:
-            raise SharpApiError(f"{path}: invalid JSON response") from err
+            response = await super()._hms_request(path, *args, **kwargs)
+        except ValueError:
+            raise SharpApiError(f"{path}: invalid JSON response") from None
         except SharpApiError as err:
             # Upstream embeds raw response text in errors, possibly with IDs.
             match = re.match(r"API error (\d{3}) on ", str(err))
             detail = f"HTTP {match[1]}" if match else "invalid API response"
-            raise SharpApiError(f"{path}: {detail}") from err
+            raise SharpApiError(f"{path}: {detail}") from None
+        except SharpAuthError:
+            raise SharpAuthError(f"{path}: authentication rejected") from None
+        except SharpConnectionError:
+            raise SharpConnectionError(f"{path}: connection failed") from None
+        return check_api_response(response, path)
 
     async def get_devices(self):
         devices = await super().get_devices()
@@ -184,10 +303,9 @@ class SharpLifeAirClient(SharpCOCOROAir):
         await self._set_power(device, False)
 
     async def _set_power(self, device, on):
-        # EPC 80 is the standard operation-status property. Do not combine it
-        # with the proprietary F3 power field: newer/unsupported F3 layouts can
-        # reject the whole request. Never retry with another payload after an
-        # uncertain result; this is the sole write for the user's action.
+        # Retain v0.1.8's EPC 80-only payload while repairing registration.
+        # The device advertises EPC 80 as writable. Never retry with another
+        # payload after an uncertain result.
         await self._send_device_control(device, [
             {"statusCode": "80", "valueType": "valueSingle",
              "valueSingle": {"code": "30" if on else "31"}},
@@ -205,7 +323,13 @@ class SharpLifeAirClient(SharpCOCOROAir):
 
     async def _get_boxes(self):
         data = await super()._get_boxes()
-        for box in data.get("box", []):
+        boxes = data.get("box") if isinstance(data, dict) else None
+        if not isinstance(boxes, list) or any(
+            not isinstance(box, dict) or not isinstance(box.get("boxId"), str)
+            or not isinstance(box.get("echonetData", []), list) for box in boxes
+        ):
+            raise SharpApiError("setting/boxInfo: invalid box list")
+        for box in boxes:
             for device in box.get("echonetData", []):
                 device["echonetProperty"] = sanitize_properties(
                     device.get("echonetProperty")
@@ -219,6 +343,7 @@ class SharpLifeAirClient(SharpCOCOROAir):
         or remain waiting without ever reaching the purifier. Never resend the
         original POST automatically after an uncertain result.
         """
+        await self._ensure_paired(device)
         response = await super()._send_device_control(device, status_list)
         fields = ",".join(sorted({str(item.get("statusCode", "")).upper()
                                   for item in status_list

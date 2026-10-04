@@ -1,5 +1,6 @@
 """Polling and serialized commands."""
 from .api import SharpLifeAirClient
+from .const import CONF_TERMINAL_APP_ID
 
 import asyncio
 import logging
@@ -18,7 +19,9 @@ class SharpCoordinator(DataUpdateCoordinator):
         super().__init__(hass, logging.getLogger(__name__), name="Sharp Life AIR",
                          config_entry=entry, update_interval=timedelta(seconds=60))
         # The API relies on cookies; isolate these from HA's shared session.
-        self.client = SharpLifeAirClient(entry.data["email"], entry.data["password"])
+        self.entry = entry
+        self.client = SharpLifeAirClient(entry.data["email"], entry.data["password"],
+                                        terminal_app_id=entry.data.get(CONF_TERMINAL_APP_ID))
         self.lock = asyncio.Lock()
         self.authenticated = False
         self._cancel_refresh = None
@@ -42,7 +45,18 @@ class SharpCoordinator(DataUpdateCoordinator):
             try:
                 async with asyncio.timeout(90):
                     if not self.authenticated:
-                        await self.client.authenticate()
+                        try:
+                            await self.client.authenticate()
+                        finally:
+                            # Retain an allocated identity even when a later
+                            # login/registration request fails. HA setup retries
+                            # construct a new coordinator and must not allocate
+                            # another terminal on every failed attempt.
+                            identity = self.client.terminal_app_id
+                            if identity and self.entry.data.get(CONF_TERMINAL_APP_ID) != identity:
+                                self.hass.config_entries.async_update_entry(self.entry, data={
+                                    **self.entry.data, CONF_TERMINAL_APP_ID: identity,
+                                })
                         self.authenticated = True
                     devices = await self.client.get_devices()
                     return {(d.box_id, d.device_id): d for d in devices}

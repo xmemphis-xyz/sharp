@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.9
+
+- Retain terminalAppId in the HA config entry across startup, setup retry and
+  reauthentication. Reuse the identity tested in the initial config flow.
+- Register with the EU app descriptor from Life AIR 1.0.4. Validate HTTP-success
+  JSON errorCode responses for registration, pairing and ordinary API calls.
+- Stop upstream's automatic deletion of other terminal registrations. Report
+  pairing failures and terminal limits explicitly, preserving valid sensor reads.
+- Check fresh pairingFlag before device writes. When pairing is needed, request
+  it once and require a successful readback before sending deviceControl.
+  Command result validation and no automatic control-write retries are retained.
+- Add registration flags, bounded terminal count, current-client membership,
+  descriptor match, registerLevel and validated timezone to private-data-free
+  diagnostics. Diagnostics only read metadata; they never register or pair.
+
+67 tests pass, including local HTTP protocol tests and integration storage tests
+with HA interface doubles. Physical KI-TX100EU control is not yet verified.
+The user still receives E1004003 with v0.1.8's EPC 80-only power command; removing
+F3 did not fix it. Registration defects are now fixed, but neither their role
+in this failure nor the exact meaning of E1004003 has been established.
+
 ## 0.1.8
 
 - Use only the standard EPC 80 operation-status field for power on/off. Remove
