@@ -41,6 +41,8 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
         control = calls[0].kwargs["body"]["controlList"][0]
         self.assertEqual(control["echonetObject"], "013502")
         self.assertEqual(control["status"][0]["valueSingle"]["code"], "31")
+        self.assertEqual(control["status"], [{"statusCode": "80", "valueType": "valueSingle",
+                                            "valueSingle": {"code": "31"}}])
         self.assertEqual(len(calls), 4)
         self.assertEqual(calls[-1].kwargs["body"], {"resultList": [{"id": "cmd"}]})
 
@@ -61,8 +63,6 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
         # Golden vectors from c6.h.a/c6.a in Life AIR 1.0.4, not upstream
         # library constants (which set additional update bits).
         cases = (
-            ("power_on", (), "00020000000000000000000000FF00000000000000000000000000"),
-            ("power_off", (), "000200000000000000000000000000000000000000000000000000"),
             ("set_mode", ("auto",), "010000001000000000000000000000000000000000000000000000"),
             ("set_humidify", (True,), "000800000000000000000000000000FF0000000000000000000000"),
             ("set_humidify", (False,), "000800000000000000000000000000000000000000000000000000"),
@@ -76,6 +76,41 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
                 await getattr(self.client, method)(self.device, *args)
                 status = self.client._hms_request.call_args_list[0].kwargs["body"]["controlList"][0]["status"]
                 self.assertEqual(status[-1]["valueBinary"]["code"], expected)
+
+    async def test_power_uses_only_standard_operation_status(self):
+        for method, code in (("power_on", "30"), ("power_off", "31")):
+            with self.subTest(method=method):
+                self.mock_responses(
+                    {"controlList": [{"id": "cmd", "errorCode": None}]},
+                    {"resultList": [{"id": "cmd", "status": "success"}]},
+                )
+                await getattr(self.client, method)(self.device)
+                controls = self.client._hms_request.call_args_list[0].kwargs["body"]["controlList"]
+                self.assertEqual(len(controls), 1)
+                self.assertEqual(controls[0]["status"], [
+                    {"statusCode": "80", "valueType": "valueSingle", "valueSingle": {"code": code}}
+                ])
+
+    async def test_reported_execution_error_keeps_failure_and_identifies_fields(self):
+        self.mock_responses(
+            {"controlList": [{"id": "private-command", "errorCode": None}]},
+            {"resultList": [{"id": "private-command", "status": "error",
+                             "errorCode": "E1004003", "message": "private-response"}]},
+        )
+        with self.assertRaises(SharpApiError) as ctx:
+            await self.client.power_off(self.device)
+        self.assertEqual(str(ctx.exception),
+                         "controlResult: status=error, errorCode=E1004003; fields=80")
+        self.assertEqual(self.client._hms_request.call_count, 2)
+
+    async def test_mode_error_identifies_proprietary_field(self):
+        self.mock_responses(
+            {"controlList": [{"id": "cmd", "errorCode": None}]},
+            {"resultList": [{"id": "cmd", "status": "error", "errorCode": "E1004003"}]},
+        )
+        with self.assertRaisesRegex(SharpApiError, "fields=F3"):
+            await self.client.set_mode(self.device, "auto")
+        self.assertEqual(self.client._hms_request.call_count, 2)
 
     async def test_rejection_exposes_error_code(self):
         self.mock_responses({"controlList": [{"id": "cmd", "errorCode": "E123"}]})

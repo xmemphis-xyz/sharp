@@ -54,6 +54,16 @@ returned ID to complete. Malformed acknowledgements now identify the endpoint,
 response/list type, entry count and a recognized protocol error code, without
 logging raw data or identifiers. The reported KI-TX100EU failure did not expose
 the actual response structure, so on-device confirmation is still required.
+Version 0.1.8 sends only standard EPC 80 for power on/off, omitting the additional
+proprietary F3 field. This is a compatibility test prompted by the user's
+`controlResult: status=error, errorCode=E1004003`; the error code's exact meaning
+and whether F3 caused it have not been established. Mode and humidification
+remain F3 controls and are not considered physically verified.
+If control fails or readings appear stale, use **Download diagnostics** from
+the integration entry menu. It reads deviceProperty and deviceStatus and exports
+only capability flags, known field types/presence/lengths, server update time
+and numeric readings. It omits configuration, credentials, IDs, raw values and
+server messages. A timestamp without a timezone is left unchanged.
 Version 0.1.5 corrects the pinned library's F3 update masks for power, mode and
 humidification using the Life AIR 1.0.4 APK. Failures now identify the endpoint
 and cloud error code/status. An uncertain result also schedules a state refresh.

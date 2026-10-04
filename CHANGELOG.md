@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.8
+
+- Use only the standard EPC 80 operation-status field for power on/off. Remove
+  the additional proprietary F3 field from power requests, while preserving
+  confirmation polling and the prohibition on automatic write retries.
+- Include the requested field codes in execution errors (e.g. `fields=80`).
+- Add Download diagnostics with allowlisted deviceProperty capabilities and
+  deviceStatus field presence/lengths and the server's update timestamp. These
+  two reads run only when diagnostics are requested, serialized with commands
+  and individually bounded to five seconds. No credentials, raw payloads,
+  device/command IDs or arbitrary server messages are exported.
+
+44 tests pass. The physical test on 0.1.7 now reaches controlResult and returns
+`status=error, errorCode=E1004003`. Its exact documented meaning is unknown.
+Removing the supplementary F3 command tests a possible compatibility issue;
+successful operation on KI-TX100EU remains unconfirmed. Diagnostic timestamps
+are preserved as returned, without assuming a timezone for naive values.
+
 ## 0.1.7
 
 - Remove the single-entry limit on deviceControl acknowledgements. Accept a

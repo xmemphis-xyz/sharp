@@ -1,13 +1,13 @@
-Sharp Life AIR 0.1.7 removes a restrictive command acknowledgement check and adds safe diagnostics for the reported fan.turn_off failure.
+Sharp Life AIR 0.1.8 simplifies power commands and adds cloud capability/freshness diagnostics for the KI-TX100EU control failure.
 
-Previously, the adapter required exactly one controlList entry and otherwise raised "Invalid Sharp command acknowledgement". The APK acknowledgement decoder accepts a list, and controlResult accepts a list of command IDs. The adapter now validates all returned entries and polls every accepted ID, reporting success only after all complete. IDs already confirmed are removed from subsequent polling.
+Power on/off now sends only standard EPC 80, code 30/31, instead of combining it with the proprietary F3 power field. Command acknowledgement and result validation remain mandatory. An execution error identifies the requested field codes. Uncertain writes are never automatically repeated.
 
-Partial rejection, duplicate or malformed IDs, missing or unrelated results, unmatch and timeout remain failures. The original command POST is never automatically repeated. State is refreshed after uncertain outcomes.
+The reported 0.1.7 error is controlResult: status=error, errorCode=E1004003. The code's exact documented meaning has not been established. Removing the supplementary F3 command tests a possible compatibility issue; this is not a confirmed device fix. Mode and humidification controls remain unchanged and require physical verification.
 
-If an acknowledgement is still invalid, the error now includes deviceControl, the response type, the known list field's type/count and a recognized top-level protocol errorCode when present. No raw cloud payloads, tokens or device/command identifiers are included.
+Download diagnostics is now available in the integration entry menu. When requested, it reads deviceProperty and deviceStatus with a five-second timeout per request. The output includes known field capabilities, presence and byte lengths, server update timestamps and numeric humidity/temperature/power readings. Credentials, configuration, identifiers, raw cloud payloads and arbitrary error messages are omitted. Naive server timestamps are not assigned an assumed timezone.
 
-Update to 0.1.7 in HACS, restart Home Assistant, keep the existing configuration and try turning the purifier off once. Confirm the physical device turns off. If it fails, send the full new error beginning with deviceControl or controlResult.
+Update to 0.1.8 in HACS and restart Home Assistant. Keep the existing integration configuration. Try power-off once and check the physical purifier. If it still fails, send the new command error and Download diagnostics from Settings > Devices & services > Sharp Life AIR > the integration entry menu. The diagnostics also help investigate the remaining 50% humidity reading and unknown operation mode.
 
-38 regression tests pass, including multiple acknowledgements, mixed success/wait/error, duplicate/missing/unrelated IDs, partial-success timeout and diagnostic privacy. The user's log proves the previous acknowledgement validation failed but does not reveal the response structure. Multiple entries are a possible cause; physical testing is still required.
+44 regression tests pass, covering standard-only power requests, the observed E1004003 execution failure, acknowledgement/result validation, no automatic retries, status parsing and diagnostic privacy. Device operation remains to be confirmed.
 
 For manual installation, extract sharp_life_air.zip into /config.

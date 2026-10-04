@@ -184,10 +184,13 @@ class SharpLifeAirClient(SharpCOCOROAir):
         await self._set_power(device, False)
 
     async def _set_power(self, device, on):
+        # EPC 80 is the standard operation-status property. Do not combine it
+        # with the proprietary F3 power field: newer/unsupported F3 layouts can
+        # reject the whole request. Never retry with another payload after an
+        # uncertain result; this is the sole write for the user's action.
         await self._send_device_control(device, [
             {"statusCode": "80", "valueType": "valueSingle",
              "valueSingle": {"code": "30" if on else "31"}},
-            f3_control(14, 0xFF if on else 0),
         ])
 
     async def set_mode(self, device, mode):
@@ -217,6 +220,9 @@ class SharpLifeAirClient(SharpCOCOROAir):
         original POST automatically after an uncertain result.
         """
         response = await super()._send_device_control(device, status_list)
+        fields = ",".join(sorted({str(item.get("statusCode", "")).upper()
+                                  for item in status_list
+                                  if re.fullmatch(r"[0-9A-Fa-f]{2}", str(item.get("statusCode", "")))}))
         controls = response.get("controlList") if isinstance(response, dict) else None
         if not isinstance(controls, list) or not controls:
             raise SharpApiError("deviceControl: invalid acknowledgement (" +
@@ -261,7 +267,8 @@ class SharpLifeAirClient(SharpCOCOROAir):
                         raise SharpApiError("controlResult: unmatch; requested state was not confirmed")
                     elif state not in ("wait", "exec"):
                         raise SharpApiError(f"controlResult: status={error_code(state)}, "
-                                            f"errorCode={error_code(item.get('errorCode'))}")
+                                            f"errorCode={error_code(item.get('errorCode'))}; "
+                                            f"fields={fields or 'unknown'}")
                 if not pending:
                     return response
                 await asyncio.sleep(1)
