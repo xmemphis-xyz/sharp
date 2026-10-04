@@ -3,20 +3,35 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [.github/workflows/release.yml]
+    paths:
+      - .github/workflows/release.yml
+      - custom_components/sharp_life_air/manifest.json
 permissions:
   contents: write
 concurrency:
   group: publish-release
   cancel-in-progress: false
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Read version and build integration archive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install pinned API dependency
+        run: python -m pip install aiosharp-cocoro-air==0.2.0
+      - name: Run regression tests and check syntax
+        run: |
+          python -m unittest discover -s tests -v
+          python -m compileall -q custom_components tests 
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build integration archive
         id: package
-        shell: bash
         run: |
           python - <<'PY'
           import json, os, zipfile
@@ -30,40 +45,14 @@ jobs:
                   if path.is_file() and "__pycache__" not in path.parts:
                       archive.write(path, str(path))
           PY
-      - name: Publish GitHub release
+      - name: Publish release after tests pass
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.package.outputs.tag }}
-        shell: bash
         run: |
-          cat > release-notes.md <<'NOTES'
-          Sharp Life AIR: fix startup failure caused by empty ECHONET properties.
-
-          - UI configuration and reauthentication.
-          - Power, preset modes and humidification control.
-          - Temperature, humidity, power, energy and diagnostic sensors.
-          - Ignore empty ECHONET values without inventing sensor states. Fixes index out of range during startup and polling.
-
-          KI-TX100EU readings were confirmed with the standalone API script. The Home Assistant component and control commands still require testing on the device.
-
-          Install through HACS using this repository as a custom Integration repository, then restart Home Assistant and add Sharp Life AIR under Settings > Devices & services. Local brand images require Home Assistant 2026.3 or newer.
-
-          For manual installation, extract sharp_life_air.zip into /config.
-          NOTES
-          python - <<'PY'
-          import json, os, urllib.request, urllib.error
-          tag = os.environ["RELEASE_TAG"]
-          repo = os.environ["GITHUB_REPOSITORY"]
-          request = urllib.request.Request(
-              f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
-              headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                       "Accept": "application/vnd.github+json"})
-          try:
-              with urllib.request.urlopen(request) as response:
-                  json.load(response)
-              raise SystemExit("Release already exists; refusing to replace it")
-          except urllib.error.HTTPError as error:
-              if error.code != 404:
-                  raise
-          PY
-          gh release create "$RELEASE_TAG" sharp_life_air.zip --target "$GITHUB_SHA" --title "Sharp Life AIR $RELEASE_TAG" --notes-file release-notes.md
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1
+          then
+            echo "Release already exists; refusing to replace it."
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" sharp_life_air.zip --target "$GITHUB_SHA" --title "Sharp Life AIR $RELEASE_TAG" --notes-file RELEASE_NOTES.md

@@ -1,14 +1,9 @@
-"""Regression tests for empty Sharp cloud properties (stdlib only)."""
+"""Regression tests using the pinned Sharp API dependency."""
 import importlib.util
-import sys
-import types
 import unittest
 from pathlib import Path
 
-stub = types.ModuleType("aiosharp_cocoro_air")
-stub.SharpCOCOROAir = type("SharpCOCOROAir", (), {})
-stub.SharpApiError = type("SharpApiError", (Exception,), {})
-sys.modules["aiosharp_cocoro_air"] = stub
+from aiosharp_cocoro_air import SharpApiError, decode_echonet_property
 spec = importlib.util.spec_from_file_location(
     "sharp_api", Path(__file__).parents[1] / "custom_components/sharp_life_air/api.py"
 )
@@ -36,8 +31,12 @@ class TestProperties(unittest.TestCase):
         )
 
     def test_invalid_hex(self):
-        with self.assertRaises(stub.SharpApiError):
+        with self.assertRaises(SharpApiError):
             api.sanitize_properties("invalid")
+
+    def test_real_decoder_survives_empty_fields(self):
+        clean = api.sanitize_properties("00000000000000008000840200098800a000c000")
+        self.assertEqual(decode_echonet_property(clean), {"power_watts": 9})
 
 
 if __name__ == "__main__":

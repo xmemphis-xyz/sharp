@@ -2,7 +2,7 @@
 from homeassistant.const import Platform
 from .coordinator import SharpCoordinator
 
-PLATFORMS = [Platform.FAN, Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.FAN, Platform.SELECT, Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
 
 
 async def async_setup_entry(hass, entry):

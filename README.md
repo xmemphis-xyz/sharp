@@ -20,8 +20,9 @@ configuration storage; never commit them to GitHub.
 
 ## Entities
 
-- Fan: power on/off and API preset modes.
-- Switch: humidification when the API reports support.
+- Fan: power on/off, three manual speeds (Silent/Medium/High) and automatic presets.
+- Select: Operation mode, with all eight API modes available on the device page.
+- Switch: humidification for KI-series devices, even if the first response has empty state fields.
 - Sensors: temperature, humidity, power, energy, airflow and operation modes.
 - Diagnostic readings: raw dust, smell, filter, light and PCI values; no assumed
   units or percentages.
@@ -29,6 +30,18 @@ configuration storage; never commit them to GitHub.
 
 Polling runs every 60 seconds. Cloud readings may lag after commands. Available
 modes are the library's modes; not all have been verified for KI-TX100EU.
+The speed slider maps 1–33% to Silent, 34–66% to Medium, and 67–100% to High;
+these percentages represent three selectable speeds, not measured fan output.
+Setting the slider to zero turns the purifier off. Manual speeds are no longer
+fan presets: use the speed slider or the Operation mode select for them.
+Automatic modes keep the slider unknown rather than inventing a speed.
+
+Commands follow the official app sequence: POST deviceControl, validate the
+acknowledgement, then poll controlResult for up to 30 seconds. Rejected commands,
+unmatched results and timeouts raise an HA action error. Uncertain writes are
+never automatically repeated. Refresh immediately after completion and once
+more after five seconds to accommodate cloud state delay. Physical-device
+testing is still needed; a cloud result does not replace checking the purifier.
 Energy is not yet enabled for Energy Dashboard totals because counter behavior
 is unverified. No decoded PM2.5 concentration is provided by this library.
 
@@ -42,3 +55,14 @@ on the same Sharp account.
 Confirm readings, then test power off/on, Auto and humidification. Compare each
 command against the physical purifier and Sharp app. Report HA errors with
 credentials and device identifiers removed.
+
+For experimental direct LAN connectivity use the independent
+[Sharp Life AIR Local](https://github.com/xmemphis-xyz/sharp-local) integration.
+It can coexist with this integration and requires no Sharp account.
+
+## Development
+
+```bash
+python3 -m pip install aiosharp-cocoro-air==0.2.0
+python3 -m unittest discover -s tests -v
+```

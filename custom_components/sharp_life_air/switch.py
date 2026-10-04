@@ -6,7 +6,8 @@ from .entity import SharpEntity
 async def async_setup_entry(hass, entry, async_add_entities):
     c = entry.runtime_data
     async_add_entities(SharpHumidify(c, key, "humidify") for key in c.data
-                       if c.data[key].properties.humidify is not None)
+                       if c.data[key].properties.humidify is not None
+                       or (c.data[key].model or "").upper().replace("-", "").startswith("KI"))
 
 
 class SharpHumidify(SharpEntity, SwitchEntity):
