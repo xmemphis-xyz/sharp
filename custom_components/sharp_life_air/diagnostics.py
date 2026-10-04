@@ -114,6 +114,24 @@ async def async_get_config_entry_diagnostics(hass, entry):
                 summarize_box, boxes, device, coordinator.client,
             )
             record = {"registration": registration}
+            latest = getattr(coordinator.client, "last_power_commands", {}).get(
+                (device.box_id, getattr(device, "device_id", None)),
+            )
+            if isinstance(latest, dict):
+                command = {}
+                for key, choices in (
+                    ("requested_power", {"on", "off"}),
+                    ("cloud_status", {"unknown", "success", "error", "wait", "exec"}),
+                    ("outcome", {"unconfirmed", "cloud_success", "confirmed_by_state"}),
+                ):
+                    if isinstance(latest.get(key), str) and latest[key] in choices:
+                        command[key] = latest[key]
+                if type(latest.get("state_confirmed")) is bool:
+                    command["state_confirmed"] = latest["state_confirmed"]
+                code = latest.get("error_code")
+                if isinstance(code, str) and re.fullmatch(r"E\d{7}", code):
+                    command["error_code"] = code
+                record["last_power_command"] = command
             for field in ("humidity_pct", "temperature_c", "power_watts"):
                 value = getattr(device.properties, field, None)
                 record[field] = value if type(value) in (int, float) else None
@@ -121,11 +139,12 @@ async def async_get_config_entry_diagnostics(hass, entry):
                                     ("control/deviceStatus", "deviceStatus")):
                 try:
                     async with asyncio.timeout(5):
-                        response = await coordinator.client._hms_request(
-                            endpoint, extra_params={"boxId": device.box_id,
+                        params = {"boxId": device.box_id,
                             "echonetNode": device.echonet_node,
-                            "echonetObject": device.echonet_object},
-                        )
+                            "echonetObject": device.echonet_object}
+                        if field == "deviceProperty":
+                            params["status"] = "true"
+                        response = await coordinator.client._hms_request(endpoint, extra_params=params)
                     record[field] = summarize(response, field, device)
                 except Exception as err:
                     # Exception messages can contain URLs or authentication data.

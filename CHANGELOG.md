@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.10
+
+- Request deviceProperty with status=true, matching Life AIR 1.0.4. Supplement
+  missing controls/readings only from the exact device with a comparable server
+  timestamp at least as recent as deviceStatus. Preserve valid deviceStatus
+  readings if the supplementary endpoint fails.
+- For power-only E1004003 execution errors, read back the desired EPC 80 state.
+  Require exact identity, explicit on/off and a timestamp strictly newer than
+  the pre-write deviceProperty baseline. Read up to three times within 12 seconds;
+  never resend deviceControl. Unknown, unchanged/stale, mismatched states, other
+  errors and unmatch remain failures.
+- Include allowlisted last-power-command outcome in diagnostics and use
+  status=true for its deviceProperty read. Retain a warning about E1004003 when
+  the state confirms success; never silently discard the cloud error.
+
+80 tests pass, including full local HTTP readback scenarios. The user reports
+that v0.1.9 physically switched the purifier off despite E1004003. The new live
+read and readback mechanism need physical verification; if the cloud continues
+to omit EPC 80, this version cannot confirm power and retains the action error.
+The exact documented meaning of E1004003 is still unknown.
+
 ## 0.1.9
 
 - Retain terminalAppId in the HA config entry across startup, setup retry and

@@ -55,6 +55,7 @@ class DiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record["registration"]["box_timezone"],"Europe/Warsaw")
         self.assertEqual([c.args[0] for c in client._hms_request.call_args_list],
                          ["setting/boxInfo","control/deviceProperty","control/deviceStatus"])
+        self.assertEqual(client._hms_request.call_args_list[1].kwargs["extra_params"]["status"],"true")
 
     async def test_failure_messages_are_not_exported(self):
         device=SimpleNamespace(box_id="private-box", echonet_node="private-node",
@@ -105,3 +106,18 @@ class DiagnosticsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["register_level"],level)
             else:
                 self.assertNotIn("register_level",result)
+
+    async def test_last_power_command_exports_outcome_without_identifiers_or_messages(self):
+        device = SimpleNamespace(box_id="private-box", device_id=1, echonet_node="private-node",
+            echonet_object="private-object", properties=SimpleNamespace())
+        client = SimpleNamespace(_hms_request=AsyncMock(return_value={}), last_power_commands={
+            ("private-box",1): {"requested_power":"off", "cloud_status":"error", "error_code":"E1004003",
+                "state_confirmed":True, "outcome":"confirmed_by_state", "raw":"private-secret",
+                "command_id":"private-command", "message":"private-response"}})
+        coordinator = SimpleNamespace(data={"private-key":device}, lock=asyncio.Lock(),
+            client=client,last_update_success=True)
+        result = await diagnostics.async_get_config_entry_diagnostics(None,SimpleNamespace(runtime_data=coordinator))
+        self.assertEqual(result["devices"][0]["last_power_command"], {
+            "requested_power":"off", "cloud_status":"error", "error_code":"E1004003",
+            "state_confirmed":True, "outcome":"confirmed_by_state"})
+        self.assertNotIn("private",json.dumps(result))

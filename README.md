@@ -2,8 +2,9 @@
 
 Experimental cloud integration for European Sharp Life AIR accounts, using
 `aiosharp-cocoro-air==0.2.0`. Reading a KI-TX100EU has been confirmed with the
-standalone test script. Commands and this HA component still need testing on
-the device.
+standalone test script. The user observed physical power-off on v0.1.9 despite
+the cloud reporting E1004003. Other controls and v0.1.10 readback need physical
+testing.
 
 ## Installation
 
@@ -31,6 +32,10 @@ configuration storage; never commit them to GitHub.
 Polling runs every 60 seconds. Discovery uses `setting/boxInfo`; current states
 are then fetched through `control/deviceStatus`, matching the phone app.
 Missing current fields are not filled from an older discovery snapshot.
+Version 0.1.10 also requests `control/deviceProperty` with `status=true`, as the
+official app does, when deviceStatus lacks control fields. Only a matching
+device with a comparable timestamp at least as recent as deviceStatus can
+supply readings. A failed supplementary read preserves valid deviceStatus data.
 Version 0.1.6 handles decimal range readings larger than one byte and isolates
 malformed optional status fields. Affected readings remain unknown; valid
 readings from the same response remain available. Warnings identify the field
@@ -46,7 +51,15 @@ Automatic modes keep the slider unknown rather than inventing a speed.
 Commands follow the official app sequence: POST deviceControl, validate the
 acknowledgement, then poll controlResult for up to 30 seconds. Rejected commands,
 unmatched results and timeouts raise an HA action error. Uncertain writes are
-never automatically repeated. Refresh immediately after completion and once
+never automatically repeated. For power commands only, an execution error
+E1004003 can now be resolved by a readback of the requested EPC 80 state. HA
+takes a deviceProperty/status=true baseline before the write, then makes up to
+three readback requests within 12 seconds after this specific error. Confirmation
+requires the exact device identity, explicit on/off value and a server timestamp
+strictly newer than the baseline. A matching cached value, missing state,
+unmatch or another error cannot authorize success. The original contradictory
+cloud error is retained as a log warning and in diagnostics if state confirms.
+Refresh immediately after completion and once
 more after five seconds to accommodate cloud state delay. Physical-device
 testing is still needed; a cloud result does not replace checking the purifier.
 Version 0.1.7 accepts multiple acknowledgement entries and requires every
@@ -88,8 +101,12 @@ The standalone test script still uses upstream authentication, which deletes
 older HA registrations: avoid running it alongside the integration.
 
 These are confirmed code defects, but their connection to E1004003 remains a
-hypothesis until a physical test. Update in HACS, restart Home Assistant and
-test power-off once. If it fails, send the action error and new diagnostics.
+hypothesis. The user confirmed that v0.1.9 physically switched off the purifier
+while reporting E1004003. Update in HACS, restart Home Assistant and test
+power-off once. If it fails, send the action error and new diagnostics. Diagnostics
+include the most recent power command's requested state, cloud outcome, protocol
+error code and whether a newer device state confirmed it. They do not expose IDs
+or raw data. If the readback cannot confirm power, the action error remains.
 
 ## First device test
 

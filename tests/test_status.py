@@ -37,6 +37,7 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
             "echonetProperty": "0000000000000000f128" + f1.hex(),
         }]}]}
         self.client._get_boxes = AsyncMock(return_value=self.boxes)
+        self.client._optional_live_properties = AsyncMock(return_value=None)
 
     async def test_live_status_replaces_cached_humidity_and_preserves_identity(self):
         self.client._hms_request = AsyncMock(return_value=state())
@@ -148,6 +149,41 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
         self.client._hms_request = AsyncMock(return_value=response)
         device, = await self.client.get_devices()
         self.assertEqual(device.properties.power, "on")
+
+    async def test_missing_controls_are_read_with_status_true_instead_of_capabilities_only(self):
+        self.client._optional_live_properties = api.SharpLifeAirClient._optional_live_properties.__get__(self.client)
+        status = state(50)
+        status["deviceStatus"]["status"][0]["valueSingle"]["code"] = None
+        property_state = state(54)["deviceStatus"]
+        property_state["property"] = property_state.pop("status")
+        property_state["propertyUpdatedAt"] = "2026-10-04T10:31:01"
+        self.client._hms_request = AsyncMock(side_effect=[status,{"deviceProperty":property_state}])
+        device, = await self.client.get_devices()
+        self.assertEqual(device.properties.power,"on")
+        self.assertEqual(device.properties.humidity_pct,54)
+        self.assertEqual(device.updated_at,"2026-10-04T10:31:01")
+        self.assertEqual(self.client._hms_request.call_args_list[-1].kwargs["extra_params"]["status"],"true")
+
+    async def test_older_missing_or_incomparable_property_timestamp_cannot_replace_status(self):
+        for timestamp in ("2026-10-04T10:30:59",None,"private-value","2026-10-04T10:31:01Z"):
+            with self.subTest(timestamp=timestamp):
+                self.client._optional_live_properties = api.SharpLifeAirClient._optional_live_properties.__get__(self.client)
+                status = state(50)
+                status["deviceStatus"]["status"][0]["valueSingle"]["code"] = None
+                property_state = state(54)["deviceStatus"]
+                property_state["property"] = property_state.pop("status")
+                property_state["propertyUpdatedAt"] = timestamp
+                self.client._hms_request = AsyncMock(side_effect=[status,{"deviceProperty":property_state}])
+                device, = await self.client.get_devices()
+                self.assertIsNone(device.properties.power)
+                self.assertEqual(device.properties.humidity_pct,50)
+
+    async def test_failed_property_read_does_not_discard_valid_status(self):
+        self.client._optional_live_properties = api.SharpLifeAirClient._optional_live_properties.__get__(self.client)
+        self.client._hms_request = AsyncMock(side_effect=[state(54),SharpApiError("HTTP 503")])
+        device, = await self.client.get_devices()
+        self.assertEqual(device.properties.power,"on")
+        self.assertEqual(device.properties.humidity_pct,54)
 
 
 if __name__ == "__main__":

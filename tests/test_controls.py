@@ -21,6 +21,7 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
         self.client._terminal_app_id = "fake-terminal"
         # Pairing is exercised independently through its real request sequence.
         self.client._ensure_paired = AsyncMock()
+        self.client._optional_live_properties = AsyncMock(return_value=None)
         self.device = SimpleNamespace(box_id="fake-box", device_id=1,
                                       echonet_node="node", echonet_object="013502")
         self.sleep = patch.object(api.asyncio, "sleep", new=AsyncMock())

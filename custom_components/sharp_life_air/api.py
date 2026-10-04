@@ -3,7 +3,8 @@ import asyncio
 import json
 import logging
 import re
-from dataclasses import replace
+from dataclasses import fields, replace
+from datetime import datetime
 from urllib.parse import urlencode
 
 import aiohttp
@@ -18,6 +19,52 @@ from aiosharp_cocoro_air.models import DeviceProperties
 _LOGGER = logging.getLogger(__name__)
 _STATUS_CODES = {0x80, 0x84, 0x85, 0x88, 0x8B, 0xA0, 0xC0, 0xF1, 0xF3}
 _APP_NAME = "spremote_a_eu:1:1.0.4"
+
+
+class SharpCommandResultError(SharpApiError):
+    """A matched command's execution error, with bounded protocol metadata."""
+
+    def __init__(self, state, code, requested_fields):
+        self.state = error_code(state)
+        self.code = error_code(code)
+        super().__init__(f"controlResult: status={self.state}, errorCode={self.code}; "
+                         f"fields={requested_fields or 'unknown'}")
+
+
+def state_timestamp(value):
+    """Parse a protocol timestamp without assuming a timezone."""
+    if not isinstance(value, str) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})?", value
+    ):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def at_least_as_recent(candidate, baseline, *, strictly=False):
+    """Do not compare missing timestamps or mix naive/aware server clocks."""
+    first, second = state_timestamp(candidate), state_timestamp(baseline)
+    if first is None or second is None:
+        return False
+    try:
+        return first > second if strictly else first >= second
+    except TypeError:
+        return False
+
+
+def device_state(response, field, device):
+    """Decode only the exact requested device from a live status response."""
+    data = response.get(field) if isinstance(response, dict) else None
+    if not isinstance(data, dict):
+        raise SharpApiError(f"{field}: missing device status")
+    if any(str(data.get(key)) != str(expected) for key, expected in (
+        ("deviceId", device.device_id), ("echonetNode", device.echonet_node),
+        ("echonetObject", device.echonet_object),
+    )):
+        raise SharpApiError(f"{field}: mismatched device")
+    return decode_status(data.get("status" if field == "deviceStatus" else "property")), data.get("propertyUpdatedAt")
 
 
 def check_api_response(response, endpoint):
@@ -167,6 +214,7 @@ class SharpLifeAirClient(SharpCOCOROAir):
         super().__init__(email, password, session)
         self._terminal_app_id = terminal_app_id
         self._pairing_errors = {}
+        self.last_power_commands = {}
 
     @property
     def terminal_app_id(self):
@@ -283,18 +331,50 @@ class SharpLifeAirClient(SharpCOCOROAir):
                     "echonetObject": device.echonet_object,
                 },
             )
-            status = response.get("deviceStatus") if isinstance(response, dict) else None
-            if not isinstance(status, dict):
-                raise SharpApiError("deviceStatus: missing device status")
-            if any(str(status.get(field)) != str(expected) for field, expected in (
-                ("deviceId", device.device_id), ("echonetNode", device.echonet_node),
-                ("echonetObject", device.echonet_object),
-            )):
-                raise SharpApiError("deviceStatus: mismatched device")
+            properties, updated_at = device_state(response, "deviceStatus", device)
+            if any(getattr(properties, key) is None for key in ("power", "operation_mode", "humidify")):
+                # The app's deviceProperty request includes status=true. Without
+                # it, this endpoint only reports capabilities, not current state.
+                live = await self._optional_live_properties(device)
+                if live is not None and at_least_as_recent(live[1], updated_at):
+                    extra, updated_at = live
+                    properties = replace(properties, **{
+                        field.name: getattr(extra, field.name) for field in fields(extra)
+                        if getattr(extra, field.name) is not None
+                    })
             # Do not fill missing readings with stale boxInfo values.
-            current.append(replace(device, properties=decode_status(status.get("status")),
-                                   updated_at=status.get("propertyUpdatedAt")))
+            current.append(replace(device, properties=properties, updated_at=updated_at))
         return current
+
+    async def _optional_live_properties(self, device):
+        try:
+            async with asyncio.timeout(5):
+                response = await self._hms_request("control/deviceProperty", extra_params={
+                    "boxId": device.box_id, "echonetNode": device.echonet_node,
+                    "echonetObject": device.echonet_object, "status": "true",
+                })
+                return device_state(response, "deviceProperty", device)
+        except SharpAuthError:
+            raise
+        except (SharpApiError, SharpConnectionError, TimeoutError):
+            # A failed supplementary read must not discard valid deviceStatus.
+            return None
+
+    async def _confirm_power_after_error(self, device, expected, baseline):
+        if baseline is None or state_timestamp(baseline[1]) is None:
+            return False
+        try:
+            async with asyncio.timeout(12):
+                for attempt in range(3):
+                    if attempt:
+                        await asyncio.sleep(2)
+                    live = await self._optional_live_properties(device)
+                    if (live is not None and live[0].power == expected
+                            and at_least_as_recent(live[1], baseline[1], strictly=True)):
+                        return True
+        except TimeoutError:
+            pass
+        return False
 
     async def power_on(self, device):
         await self._set_power(device, True)
@@ -303,13 +383,29 @@ class SharpLifeAirClient(SharpCOCOROAir):
         await self._set_power(device, False)
 
     async def _set_power(self, device, on):
-        # Retain v0.1.8's EPC 80-only payload while repairing registration.
-        # The device advertises EPC 80 as writable. Never retry with another
-        # payload after an uncertain result.
-        await self._send_device_control(device, [
-            {"statusCode": "80", "valueType": "valueSingle",
-             "valueSingle": {"code": "30" if on else "31"}},
-        ])
+        expected = "on" if on else "off"
+        record = {"requested_power": expected, "cloud_status": "unknown",
+                  "state_confirmed": False, "outcome": "unconfirmed"}
+        self.last_power_commands[(device.box_id, device.device_id)] = record
+        baseline = await self._optional_live_properties(device)
+        try:
+            # Keep the standard-only payload that the user confirmed can switch
+            # the purifier off. Never resend it after a contradictory result.
+            await self._send_device_control(device, [
+                {"statusCode": "80", "valueType": "valueSingle",
+                 "valueSingle": {"code": "30" if on else "31"}},
+            ])
+        except SharpCommandResultError as err:
+            record.update(cloud_status=err.state, error_code=err.code)
+            if err.state == "error" and err.code == "E1004003":
+                record["state_confirmed"] = await self._confirm_power_after_error(device, expected, baseline)
+                if record["state_confirmed"]:
+                    record["outcome"] = "confirmed_by_state"
+                    _LOGGER.warning("Sharp reported E1004003, but a newer deviceProperty state "
+                                    "confirmed power %s; command was not repeated", expected)
+                    return
+            raise
+        record.update(cloud_status="success", outcome="cloud_success")
 
     async def set_mode(self, device, mode):
         modes = {"auto": 0x10, "night": 0x11, "pollen": 0x13, "silent": 0x14,
@@ -391,9 +487,7 @@ class SharpLifeAirClient(SharpCOCOROAir):
                     elif state == "unmatch":
                         raise SharpApiError("controlResult: unmatch; requested state was not confirmed")
                     elif state not in ("wait", "exec"):
-                        raise SharpApiError(f"controlResult: status={error_code(state)}, "
-                                            f"errorCode={error_code(item.get('errorCode'))}; "
-                                            f"fields={fields or 'unknown'}")
+                        raise SharpCommandResultError(state, item.get("errorCode"), fields)
                 if not pending:
                     return response
                 await asyncio.sleep(1)
