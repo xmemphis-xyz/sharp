@@ -31,6 +31,10 @@ configuration storage; never commit them to GitHub.
 Polling runs every 60 seconds. Discovery uses `setting/boxInfo`; current states
 are then fetched through `control/deviceStatus`, matching the phone app.
 Missing current fields are not filled from an older discovery snapshot.
+Version 0.1.6 handles decimal range readings larger than one byte and isolates
+malformed optional status fields. Affected readings remain unknown; valid
+readings from the same response remain available. Warnings identify the field
+and value type without logging raw data.
 Cloud readings may lag after commands. Available
 modes are the library's modes; not all have been verified for KI-TX100EU.
 The speed slider maps 1–33% to Silent, 34–66% to Medium, and 67–100% to High;

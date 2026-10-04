@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.6
+
+- Fix the 0.1.5 deviceStatus parser's single-byte limit on decimal range
+  values. Energy/power values above 255 now decode without raising ValueError.
+- Parse each field independently. A malformed optional reading no longer
+  prevents setup or discards valid power/humidity readings from the response.
+- Handle null/empty codes and integer JSON single-value codes; ignore invalid
+  fields with a warning identifying only the field and value type.
+- Keep malformed top-level responses, mismatched device identity and responses
+  containing only invalid fields as errors. Do not reuse cached sensor values.
+
+29 regression tests pass. The user's screenshot identifies a parser failure,
+but does not identify which raw field caused it. Physical testing is pending.
+
 ## 0.1.5
 
 - Fix power, operation mode and humidification F3 update bitmaps to match

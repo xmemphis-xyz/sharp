@@ -79,12 +79,75 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
                 await self.client._hms_request("control/deviceStatus")
         self.assertEqual(str(ctx.exception), "control/deviceStatus: HTTP 500")
 
-    async def test_bad_hex_is_reported_as_api_error(self):
+    async def test_bad_hex_only_removes_affected_readings(self):
         response = state()
         response["deviceStatus"]["status"][1]["valueBinary"]["code"] = "bad hex"
         self.client._hms_request = AsyncMock(return_value=response)
-        with self.assertRaisesRegex(SharpApiError, "invalid status value"):
-            await self.client.get_devices()
+        with self.assertLogs(api.__name__, level="WARNING") as logs:
+            device, = await self.client.get_devices()
+        self.assertEqual(device.properties.power, "on")
+        self.assertIsNone(device.properties.humidity_pct)
+        self.assertIn("0xF1 (valueBinary)", logs.output[0])
+        self.assertNotIn("bad hex", logs.output[0])
+
+    async def test_range_energy_above_255_does_not_block_setup(self):
+        # 0.1.5's bytes([int(value)]) raised ValueError for this valid counter.
+        for value in ("256", "123456", 123456):
+            with self.subTest(value=value):
+                response = state()
+                response["deviceStatus"]["status"].append({
+                    "statusCode": "85", "valueType": "valueRange",
+                    "valueRange": {"type": "int", "code": value},
+                })
+                self.client._hms_request = AsyncMock(return_value=response)
+                device, = await self.client.get_devices()
+                self.assertEqual(device.properties.energy_wh, int(value))
+                self.assertEqual(device.properties.humidity_pct, 54)
+                self.assertEqual(device.properties.power, "on")
+
+    async def test_null_and_empty_fields_do_not_block_other_readings(self):
+        for value in (None, "", "null"):
+            with self.subTest(value=value):
+                response = state()
+                response["deviceStatus"]["status"].append({
+                    "statusCode": "85", "valueType": "valueBinary",
+                    "valueBinary": {"code": value},
+                })
+                self.client._hms_request = AsyncMock(return_value=response)
+                device, = await self.client.get_devices()
+                self.assertIsNone(device.properties.energy_wh)
+                self.assertEqual(device.properties.humidity_pct, 54)
+
+    async def test_malformed_optional_items_keep_valid_status(self):
+        for item in (None, {}, {"statusCode": "85", "valueType": {}},
+                     {"statusCode": "85", "valueType": "valueRange", "valueRange": {"code": "1.5"}},
+                     {"statusCode": "85", "valueType": "valueRange", "valueRange": {"code": "-1"}},
+                     {"statusCode": "F3", "valueType": "valueBinary", "valueBinary": {"code": "0100"}}):
+            with self.subTest(item=item):
+                response = state()
+                response["deviceStatus"]["status"].append(item)
+                self.client._hms_request = AsyncMock(return_value=response)
+                with self.assertLogs(api.__name__, level="WARNING"):
+                    device, = await self.client.get_devices()
+                self.assertEqual(device.properties.humidity_pct, 54)
+                self.assertEqual(device.properties.power, "on")
+
+    async def test_only_invalid_status_still_raises_update_error(self):
+        response = state()
+        response["deviceStatus"]["status"] = [{
+            "statusCode": "F1", "valueType": "valueBinary", "valueBinary": {"code": "invalid"},
+        }]
+        self.client._hms_request = AsyncMock(return_value=response)
+        with self.assertLogs(api.__name__, level="WARNING"):
+            with self.assertRaisesRegex(SharpApiError, "no usable status fields.*0xF1"):
+                await self.client.get_devices()
+
+    async def test_integer_single_code_matches_android_string_conversion(self):
+        response = state()
+        response["deviceStatus"]["status"][0]["valueSingle"]["code"] = 30
+        self.client._hms_request = AsyncMock(return_value=response)
+        device, = await self.client.get_devices()
+        self.assertEqual(device.properties.power, "on")
 
 
 if __name__ == "__main__":

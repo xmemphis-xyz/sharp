@@ -1,10 +1,14 @@
 """Sharp EU cloud adapter, matching the Life AIR 1.0.4 APK."""
 import asyncio
+import logging
 import re
 from dataclasses import replace
 
 from aiosharp_cocoro_air import SharpCOCOROAir, SharpApiError, decode_echonet_property
 from aiosharp_cocoro_air.models import DeviceProperties
+
+_LOGGER = logging.getLogger(__name__)
+_STATUS_CODES = {0x80, 0x84, 0x85, 0x88, 0x8B, 0xA0, 0xC0, 0xF1, 0xF3}
 
 
 def error_code(value):
@@ -28,32 +32,59 @@ def f3_control(index: int, value: int) -> dict:
 
 
 def decode_status(status):
-    """Convert deviceStatus.status to the pinned decoder's TLV format."""
+    """Decode independent status fields without losing other valid readings."""
     if not isinstance(status, list):
         raise SharpApiError("deviceStatus: missing status list")
-    data = bytearray(8)
+    properties = {}
+    invalid = []
     for item in status:
+        code = None
+        kind = None
         try:
             code = int(item["statusCode"], 16)
-            if code not in {0x80, 0x84, 0x85, 0x88, 0x8B, 0xA0, 0xC0, 0xF1, 0xF3}:
+            if code not in _STATUS_CODES:
                 continue
             kind = item["valueType"]
             if kind not in {"valueSingle", "valueRange", "valueBinary"}:
                 raise ValueError("Unknown value type")
             value = item[kind]["code"]
-            if value in (None, ""):
+            if value in (None, "", "null"):
                 continue
             # Range values use decimal text; single/binary values use hex.
-            payload = bytes([int(value)]) if kind == "valueRange" else bytes.fromhex(value)
-            if payload:
-                data.extend(bytes([code, len(payload)]))
-                data.extend(payload)
-        except (KeyError, TypeError, ValueError, OverflowError) as err:
-            raise SharpApiError("deviceStatus: invalid status value") from err
-    try:
-        return DeviceProperties(**decode_echonet_property(data.hex()))
-    except (IndexError, TypeError, ValueError) as err:
-        raise SharpApiError("deviceStatus: invalid property data") from err
+            if kind == "valueRange":
+                if code not in {0x80, 0x84, 0x85, 0x88, 0xA0, 0xC0}:
+                    raise ValueError("Range type for binary data")
+                if not re.fullmatch(r"\d{1,20}", str(value)):
+                    raise ValueError("Invalid unsigned integer")
+                number = int(value)
+                width = max(1, (number.bit_length() + 7) // 8)
+                payload = number.to_bytes(width, "big")
+            else:
+                # Android getString also accepts integer JSON scalar codes.
+                if not isinstance(value, (str, int)) or isinstance(value, bool):
+                    raise ValueError("Invalid hex scalar")
+                payload = bytes.fromhex(str(value))
+            if not payload:
+                continue
+            if len(payload) > 255:
+                raise ValueError("Property exceeds TLV length")
+            if code in {0x80, 0x88, 0xA0, 0xC0} and len(payload) != 1:
+                raise ValueError("Single-byte property has wrong length")
+            if code in {0xF1, 0xF3} and len(payload) < 5:
+                raise ValueError("Truncated Sharp state")
+            data = bytes(8) + bytes([code, len(payload)]) + payload
+            properties.update(decode_echonet_property(data.hex()))
+        except (KeyError, TypeError, ValueError, OverflowError, IndexError):
+            # Log only field/type, never account/device IDs or raw payloads.
+            field = f"0x{code:02X}" if code in _STATUS_CODES else "unknown"
+            value_type = kind if isinstance(kind, str) and kind in {
+                "valueSingle", "valueRange", "valueBinary"
+            } else "unknown"
+            invalid.append(field)
+            _LOGGER.warning("deviceStatus: ignored invalid field %s (%s)", field, value_type)
+    if invalid and not properties:
+        raise SharpApiError("deviceStatus: no usable status fields; invalid: " + ", ".join(invalid))
+    return DeviceProperties(**properties)
 
 
 def sanitize_properties(value: str | None) -> str:
