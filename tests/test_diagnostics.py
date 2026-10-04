@@ -141,3 +141,18 @@ class DiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["current_status"]["fields"][1]["payload_bytes"],27)
         self.assertNotIn("private",json.dumps(result))
         self.assertNotIn("00"*27,json.dumps(result))
+
+    async def test_power_payload_fields_are_allowlisted_without_exporting_arbitrary_input(self):
+        device = SimpleNamespace(box_id="private-box", device_id=1, echonet_node="node",
+                                 echonet_object="obj", properties=SimpleNamespace())
+        for requested, expected in ((["80", "F3"], ["80", "F3"]),
+                                    (["private-secret"], None)):
+            client = SimpleNamespace(_hms_request=AsyncMock(return_value={}),
+                last_power_commands={("private-box", 1): {"requested_fields":requested}})
+            coordinator = SimpleNamespace(data={"device":device}, lock=asyncio.Lock(),
+                                          client=client, last_update_success=True)
+            result = await diagnostics.async_get_config_entry_diagnostics(
+                None, SimpleNamespace(runtime_data=coordinator))
+            command = result["devices"][0]["last_power_command"]
+            self.assertEqual(command.get("requested_fields"), expected)
+            self.assertNotIn("private", json.dumps(result))

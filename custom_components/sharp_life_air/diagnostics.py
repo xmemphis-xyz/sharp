@@ -130,6 +130,8 @@ async def async_get_config_entry_diagnostics(hass, entry):
                         command[key] = latest[key]
                 if type(latest.get("state_confirmed")) is bool:
                     command["state_confirmed"] = latest["state_confirmed"]
+                if latest.get("requested_fields") == ["80", "F3"]:
+                    command["requested_fields"] = ["80", "F3"]
                 code = latest.get("error_code")
                 if isinstance(code, str) and re.fullmatch(r"E\d{7}", code):
                     command["error_code"] = code

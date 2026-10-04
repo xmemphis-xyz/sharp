@@ -45,7 +45,9 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(control["echonetObject"], "013502")
         self.assertEqual(control["status"][0]["valueSingle"]["code"], "31")
         self.assertEqual(control["status"], [{"statusCode": "80", "valueType": "valueSingle",
-                                            "valueSingle": {"code": "31"}}])
+                                            "valueSingle": {"code": "31"}},
+            {"statusCode":"F3", "valueType":"valueBinary", "valueBinary":{
+                "code":"000200000000000000000000000000000000000000000000000000"}}])
         self.assertEqual(len(calls), 4)
         self.assertEqual(calls[-1].kwargs["body"], {"resultList": [{"id": "cmd"}]})
 
@@ -80,8 +82,12 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
                 status = self.client._hms_request.call_args_list[0].kwargs["body"]["controlList"][0]["status"]
                 self.assertEqual(status[-1]["valueBinary"]["code"], expected)
 
-    async def test_power_uses_only_standard_operation_status(self):
-        for method, code in (("power_on", "30"), ("power_off", "31")):
+    async def test_power_matches_complete_official_app_payload(self):
+        # Independent literals from c6.a.m -> c6.h.t/q in the supplied APK.
+        for method, code, binary in (
+            ("power_on", "30", "00020000000000000000000000FF00000000000000000000000000"),
+            ("power_off", "31", "000200000000000000000000000000000000000000000000000000"),
+        ):
             with self.subTest(method=method):
                 self.mock_responses(
                     {"controlList": [{"id": "cmd", "errorCode": None}]},
@@ -91,8 +97,14 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
                 controls = self.client._hms_request.call_args_list[0].kwargs["body"]["controlList"]
                 self.assertEqual(len(controls), 1)
                 self.assertEqual(controls[0]["status"], [
-                    {"statusCode": "80", "valueType": "valueSingle", "valueSingle": {"code": code}}
+                    {"statusCode": "80", "valueType": "valueSingle", "valueSingle": {"code": code}},
+                    {"statusCode": "F3", "valueType": "valueBinary", "valueBinary": {"code": binary}},
                 ])
+                payload = bytes.fromhex(binary)
+                self.assertEqual(len(payload), 27)
+                self.assertEqual(payload[:4], bytes([0, 2, 0, 0]))
+                self.assertEqual([i for i, value in enumerate(payload[4:], start=5) if value],
+                                 [14] if method == "power_on" else [])
 
     async def test_reported_execution_error_keeps_failure_and_identifies_fields(self):
         self.mock_responses(
@@ -103,7 +115,7 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(SharpApiError) as ctx:
             await self.client.power_off(self.device)
         self.assertEqual(str(ctx.exception),
-                         "controlResult: status=error, errorCode=E1004003; fields=80")
+                         "controlResult: status=error, errorCode=E1004003; fields=80,F3")
         self.assertEqual(self.client._hms_request.call_count, 2)
 
     async def test_mode_error_identifies_proprietary_field(self):

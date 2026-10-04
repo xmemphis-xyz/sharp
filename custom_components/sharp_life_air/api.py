@@ -387,15 +387,19 @@ class SharpLifeAirClient(SharpCOCOROAir):
     async def _set_power(self, device, on):
         expected = "on" if on else "off"
         record = {"requested_power": expected, "cloud_status": "unknown",
-                  "state_confirmed": False, "outcome": "unconfirmed"}
+                  "state_confirmed": False, "outcome": "unconfirmed",
+                  "requested_fields": ["80", "F3"]}
         self.last_power_commands[(device.box_id, device.device_id)] = record
         baseline = await self._optional_live_properties(device)
         try:
-            # Keep the standard-only payload that the user confirmed can switch
-            # the purifier off. Never resend it after a contradictory result.
+            # Life AIR 1.0.4 c6.a.m sends EPC 80 plus c6.h.q/t: F3 byte 14
+            # with only bitmap bit 9 set. Restore the complete app payload;
+            # the standard-only experiment did not resolve execution failures.
+            # Send both fields in one POST, never an automatic fallback/retry.
             await self._send_device_control(device, [
                 {"statusCode": "80", "valueType": "valueSingle",
                  "valueSingle": {"code": "30" if on else "31"}},
+                f3_control(14, 0xFF if on else 0),
             ])
         except SharpCommandResultError as err:
             record.update(cloud_status=err.state, error_code=err.code)

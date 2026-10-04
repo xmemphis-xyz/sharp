@@ -72,10 +72,12 @@ returned ID to complete. Malformed acknowledgements now identify the endpoint,
 response/list type, entry count and a recognized protocol error code, without
 logging raw data or identifiers. The reported KI-TX100EU failure did not expose
 the actual response structure, so on-device confirmation is still required.
-Power commands retain v0.1.8's standard EPC 80 payload. The user still received
-`controlResult: status=error, errorCode=E1004003; fields=80` on that version, so
-removing F3 did not resolve the reported failure. Its exact documented meaning
-has not been established. Mode and humidification remain F3 controls.
+Version 0.1.12 restores the official complete power payload: EPC 80 plus F3
+byte 14, with only bitmap bit 9 selected, in one POST. Standard-only power
+from 0.1.8–0.1.11 did not resolve E1004003. Stable registration, confirmed
+pairing and current-state readback remain in use. No automatic retry is sent.
+The exact meaning of E1004003 and physical execution remain unverified.
+Mode and humidification remain unchanged F3 controls.
 If control fails or readings appear stale, use **Download diagnostics** from
 the integration entry menu. It reads deviceProperty and deviceStatus and exports
 only capability flags, known field types/presence/lengths, server update time,
@@ -105,12 +107,12 @@ Keep the existing integration when updating; deleting it loses its saved identit
 The standalone test script still uses upstream authentication, which deletes
 older HA registrations: avoid running it alongside the integration.
 
-These are confirmed code defects, but their connection to E1004003 remains a
-hypothesis. The user confirmed that v0.1.9 physically switched off the purifier
-while reporting E1004003. Update in HACS, restart Home Assistant and test
+The connection of those registration defects to E1004003 remains a hypothesis.
+Earlier physical success was intermittent: the user confirms that the latest
+0.1.11 power-off did not execute. Update in HACS, restart Home Assistant and test
 power-off once. If it fails, send the action error and new diagnostics. Diagnostics
 include the most recent power command's requested state, cloud outcome, protocol
-error code and whether a newer device state confirmed it. They do not expose IDs
+error code and whether a newer device state confirmed it, plus the requested power fields. They do not expose IDs
 or raw data. If the readback cannot confirm power, the action error remains.
 
 ## First device test

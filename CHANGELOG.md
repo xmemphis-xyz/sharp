@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.12
+
+- Restore the complete Life AIR 1.0.4 power command: EPC 80 plus F3 byte 14,
+  with only bitmap bit 9 selected, sent together in one deviceControl POST.
+  Match c6.a.m and c6.h.q/t; standard-only power in 0.1.8–0.1.11 did not
+  resolve the reported E1004003 execution failures. Mode/humidify are unchanged.
+- Keep stable terminal identity, confirmed pairing and bounded newer-state
+  readback. Never automatically retry or send an alternate power payload.
+- Include requested_fields [80, F3] in last-power-command diagnostics.
+- Verify both full power vectors, unchanged unrelated F3 fields and a single
+  write for an already-paired client at its terminal limit.
+
+84 tests pass. The latest 0.1.11 diagnostics show valid pairing and omitted
+80/F3 current values; the user confirms that the purifier did not switch off.
+Nine paired terminals and maxFlag=true alone do not establish the error cause.
+This release tests the official full payload with registration fixes introduced
+in 0.1.9. Device execution and the exact meaning of E1004003 remain unverified.
+
 ## 0.1.11
 
 - Fix the v0.1.10 deviceProperty reader: live values are in deviceProperty.status,

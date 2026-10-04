@@ -174,6 +174,10 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
         await self.client.power_off(self.device)
         self.assertFalse(self.calls_for("setting/pairing/"))
         self.assertEqual(len(self.calls_for("control/deviceControl")), 1)
+        write, = self.calls_for("control/deviceControl")
+        self.assertEqual([item["statusCode"] for item in write[3]["controlList"][0]["status"]],
+                         ["80", "F3"])
+        self.assertFalse(any(call[0] == "PUT" for call in self.calls))
 
     async def test_lost_pairing_is_reestablished_before_single_write(self):
         await self.client.authenticate()
@@ -188,13 +192,14 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(write[2]["terminalAppId"], "fake-terminal")
         self.assertEqual(write[3]["controlList"][0]["status"], [
             {"statusCode":"80", "valueType":"valueSingle", "valueSingle":{"code":"31"}},
+            {"statusCode":"F3", "valueType":"valueBinary", "valueBinary":{"code":"000200000000000000000000000000000000000000000000000000"}},
         ])
 
     async def test_execution_error_after_valid_pairing_does_not_repeat_write(self):
         await self.client.authenticate()
         self.responses["control/controlResult"] = (200, {"resultList":[
             {"id":"fake-command", "status":"error", "errorCode":"E1004003"}]})
-        with self.assertRaisesRegex(SharpApiError, "E1004003; fields=80"):
+        with self.assertRaisesRegex(SharpApiError, "E1004003; fields=80,F3"):
             await self.client.power_off(self.device)
         self.assertEqual(len(self.calls_for("control/deviceControl")), 1)
         self.assertEqual(len(self.calls_for("setting/pairing/")), 1)
@@ -255,7 +260,7 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("newer deviceProperty state confirmed power off",str(logs.output))
         self.assertEqual(self.client.last_power_commands[("fake-box",1)], {
             "requested_power":"off", "cloud_status":"error", "error_code":"E1004003",
-            "state_confirmed":True, "outcome":"confirmed_by_state",
+            "requested_fields":["80","F3"], "state_confirmed":True, "outcome":"confirmed_by_state",
         })
 
     async def test_power_on_error_can_be_confirmed_without_changing_or_repeating_payload(self):
@@ -266,13 +271,14 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
         write, = self.calls_for("control/deviceControl")
         self.assertEqual(write[3]["controlList"][0]["status"], [
             {"statusCode":"80", "valueType":"valueSingle", "valueSingle":{"code":"30"}},
+            {"statusCode":"F3", "valueType":"valueBinary", "valueBinary":{"code":"00020000000000000000000000FF00000000000000000000000000"}},
         ])
         self.assertTrue(self.client.last_power_commands[("fake-box",1)]["state_confirmed"])
 
     async def test_opposite_readback_still_raises_original_error(self):
         self.apply_control = False
         await self.prepare_execution_error()
-        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80"):
+        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80,F3"):
             await self.client.power_off(self.device)
         self.assertEqual(len(self.calls_for("control/deviceControl")),1)
         self.assertEqual(len(self.calls_for("control/deviceProperty")),4)
@@ -282,28 +288,28 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
         self.advance_time = False
         self.reported_power = "31"
         await self.prepare_execution_error()
-        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80"):
+        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80,F3"):
             await self.client.power_off(self.device)
         self.assertEqual(len(self.calls_for("control/deviceControl")),1)
 
     async def test_absent_power_value_is_not_confirmation(self):
         self.missing_power = True
         await self.prepare_execution_error()
-        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80"):
+        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80,F3"):
             await self.client.power_off(self.device)
         self.assertEqual(len(self.calls_for("control/deviceControl")),1)
 
     async def test_other_device_readback_is_not_confirmation(self):
         self.mismatched_readback = True
         await self.prepare_execution_error()
-        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80"):
+        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80,F3"):
             await self.client.power_off(self.device)
         self.assertEqual(len(self.calls_for("control/deviceControl")),1)
 
     async def test_unavailable_baseline_does_not_prevent_write_or_hide_error(self):
         await self.prepare_execution_error()
         self.responses["control/deviceProperty"] = (503,{"message":"private-response"})
-        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80"):
+        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80,F3"):
             await self.client.power_off(self.device)
         self.assertEqual(len(self.calls_for("control/deviceControl")),1)
         self.assertEqual(len(self.calls_for("control/deviceProperty")),1)
@@ -325,7 +331,7 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
             "property":[{"statusCode":"80", "valueType":"valueSingle", "valueSingle":[{"code":"30"},{"code":"31"}]}],
             "status":[{"statusCode":"80", "valueType":"valueSingle", "valueSingle":{"code":"31"}}],
         }})
-        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80"):
+        with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80,F3"):
             await self.client.power_off(self.device)
         self.assertEqual(len(self.calls_for("control/deviceControl")),1)
         self.assertEqual(len(self.calls_for("control/deviceProperty")),1)
