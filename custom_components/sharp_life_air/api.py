@@ -64,7 +64,9 @@ def device_state(response, field, device):
         ("echonetObject", device.echonet_object),
     )):
         raise SharpApiError(f"{field}: mismatched device")
-    return decode_status(data.get("status" if field == "deviceStatus" else "property")), data.get("propertyUpdatedAt")
+    # Both endpoints store live values in status. deviceProperty.property
+    # contains schemas (enumerations/ranges/binary definitions), never readings.
+    return decode_status(data.get("status")), data.get("propertyUpdatedAt")
 
 
 def check_api_response(response, endpoint):

@@ -27,6 +27,8 @@ def summarize(response, field, device):
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})?", timestamp
     ):
         result["property_updated_at"] = timestamp
+    if field == "deviceProperty":
+        result["current_status"] = summarize({"deviceStatus": data}, "deviceStatus", device)
     items = data.get("property" if field == "deviceProperty" else "status")
     if not isinstance(items, list):
         result["fields_available"] = False
@@ -46,7 +48,7 @@ def summarize(response, field, device):
             if type(item.get(flag)) is bool:
                 info[flag] = item[flag]
         value = item.get(kind) if isinstance(kind, str) and kind in _TYPES else None
-        if isinstance(value, dict):
+        if field == "deviceStatus" and isinstance(value, dict):
             value = value.get("code")
             info["has_value"] = value not in (None, "", "null")
             if kind == "valueBinary" and isinstance(value, str) and re.fullmatch(r"(?:[0-9A-Fa-f]{2}){0,255}", value):

@@ -84,7 +84,10 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
                 "deviceId":2 if self.executed and self.mismatched_readback else 1,
                 "echonetNode":"node", "echonetObject":"013502",
                 "propertyUpdatedAt":"2026-10-04T15:41:01" if self.executed and self.advance_time else "2026-10-04T15:41:00",
-                "property":[{"statusCode":"80", "valueType":"valueSingle", "valueSingle":{
+                "property":[{"statusCode":"80", "valueType":"valueSingle", "get":True, "set":True,
+                    "valueSingle":[{"name":"On", "code":"30"},{"name":"Off", "code":"31"}]},
+                    {"statusCode":"F1", "valueType":"valueBinary", "valueBinary":{"data":"private-schema"}}],
+                "status":[{"statusCode":"80", "valueType":"valueSingle", "valueSingle":{
                     "code":None if self.executed and self.missing_power else self.reported_power}}],
             }})
         if path == "control/deviceControl":
@@ -319,7 +322,8 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
         await self.prepare_execution_error()
         self.responses["control/deviceProperty"] = (200, {"deviceProperty": {
             "deviceId":1, "echonetNode":"node", "echonetObject":"013502",
-            "property":[{"statusCode":"80", "valueType":"valueSingle", "valueSingle":{"code":"31"}}],
+            "property":[{"statusCode":"80", "valueType":"valueSingle", "valueSingle":[{"code":"30"},{"code":"31"}]}],
+            "status":[{"statusCode":"80", "valueType":"valueSingle", "valueSingle":{"code":"31"}}],
         }})
         with self.assertRaisesRegex(SharpApiError,"E1004003; fields=80"):
             await self.client.power_off(self.device)

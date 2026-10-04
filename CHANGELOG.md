@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.11
+
+- Fix the v0.1.10 deviceProperty reader: live values are in deviceProperty.status,
+  while deviceProperty.property contains capability schemas and value definitions.
+  Match the official APK's separate b6.l.f.c parsers for these sections.
+- Stop decoding enumerations, range definitions and binary schemas as readings.
+  This removes the reported invalid 8B/A0/C0/F1/F3 warnings originating from that
+  mistaken input and restores usable baselines/readbacks for power confirmation.
+  Real malformed status values are still handled by the existing decoder.
+- Keep capability flags in diagnostics and add a separate current_status summary
+  for the deviceProperty response. Never expose raw definitions, values or IDs.
+- Correct HTTP test fixtures to include both property and status sections, and
+  add regressions ensuring capability-only data cannot supply or confirm power.
+
+83 tests pass. The user's log exposed this confirmed parser defect. Mode and
+humidification now appear in the supplied HA screenshot, but the screenshot
+still shows E1004003 after power-off. Corrected readback requires physical
+verification. Payload, polling windows, registration and single-write behavior
+are unchanged; the exact documented meaning of E1004003 remains unknown.
+
 ## 0.1.10
 
 - Request deviceProperty with status=true, matching Life AIR 1.0.4. Supplement

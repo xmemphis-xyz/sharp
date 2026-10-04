@@ -155,7 +155,8 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
         status = state(50)
         status["deviceStatus"]["status"][0]["valueSingle"]["code"] = None
         property_state = state(54)["deviceStatus"]
-        property_state["property"] = property_state.pop("status")
+        property_state["property"] = [{"statusCode":"80", "valueType":"valueSingle",
+            "valueSingle":[{"code":"30","name":"On"},{"code":"31","name":"Off"}]}]
         property_state["propertyUpdatedAt"] = "2026-10-04T10:31:01"
         self.client._hms_request = AsyncMock(side_effect=[status,{"deviceProperty":property_state}])
         device, = await self.client.get_devices()
@@ -171,7 +172,8 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
                 status = state(50)
                 status["deviceStatus"]["status"][0]["valueSingle"]["code"] = None
                 property_state = state(54)["deviceStatus"]
-                property_state["property"] = property_state.pop("status")
+                property_state["property"] = [{"statusCode":"80", "valueType":"valueSingle",
+                    "valueSingle":[{"code":"30","name":"On"},{"code":"31","name":"Off"}]}]
                 property_state["propertyUpdatedAt"] = timestamp
                 self.client._hms_request = AsyncMock(side_effect=[status,{"deviceProperty":property_state}])
                 device, = await self.client.get_devices()
@@ -184,6 +186,47 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
         device, = await self.client.get_devices()
         self.assertEqual(device.properties.power,"on")
         self.assertEqual(device.properties.humidity_pct,54)
+
+    async def test_property_schemas_do_not_generate_invalid_reading_warnings(self):
+        # b6.l.f.c: property is decoded by l.i (capabilities), status by l.j
+        # (current values). Keep both sections in the fixture, as in the APK.
+        self.client._optional_live_properties = api.SharpLifeAirClient._optional_live_properties.__get__(self.client)
+        status = state(50)
+        status["deviceStatus"]["status"][0]["valueSingle"]["code"] = None
+        current = state(54)["deviceStatus"]
+        current["propertyUpdatedAt"] = "2026-10-04T10:31:01"
+        current["property"] = [
+            {"statusCode":"80", "valueType":"valueSingle", "get":True, "set":True,
+             "valueSingle":[{"name":"On", "code":"30"},{"name":"Off", "code":"31"}]},
+            {"statusCode":"84", "valueType":"valueRange",
+             "valueRange":{"type":"int", "min":"0", "max":"65535", "step":"1", "unit":"W"}},
+            {"statusCode":"F1", "valueType":"valueBinary", "valueBinary":{"data":"private-schema"}},
+            {"statusCode":"F3", "valueType":"valueBinary", "valueBinary":{"data":"private-schema"}},
+        ]
+        f3 = bytearray(27)
+        f3[4], f3[15] = 0x10, 0xFF
+        current["status"].append({"statusCode":"F3", "valueType":"valueBinary",
+                                  "valueBinary":{"code":f3.hex()}})
+        self.client._hms_request = AsyncMock(side_effect=[status,{"deviceProperty":current}])
+        with self.assertNoLogs(api.__name__,level="WARNING"):
+            device, = await self.client.get_devices()
+        self.assertEqual(device.properties.power,"on")
+        self.assertEqual(device.properties.operation_mode,"Auto")
+        self.assertTrue(device.properties.humidify)
+        self.assertEqual(device.properties.humidity_pct,54)
+
+    async def test_capabilities_without_status_cannot_supply_power_or_readback(self):
+        response = {"deviceProperty":{"deviceId":1, "echonetNode":"node", "echonetObject":"013502",
+            "propertyUpdatedAt":"2026-10-04T10:31:01", "property":[
+                {"statusCode":"80", "valueType":"valueSingle", "valueSingle":{"code":"31"}},
+            ]}}
+        self.client._optional_live_properties = api.SharpLifeAirClient._optional_live_properties.__get__(self.client)
+        self.client._hms_request = AsyncMock(return_value=response)
+        with self.assertNoLogs(api.__name__,level="WARNING"):
+            live = await self.client._optional_live_properties(
+                type("Device",(),{"device_id":1,"box_id":"box","echonet_node":"node","echonet_object":"013502"})()
+            )
+        self.assertIsNone(live)
 
 
 if __name__ == "__main__":

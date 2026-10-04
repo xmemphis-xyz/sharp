@@ -3,7 +3,7 @@
 Experimental cloud integration for European Sharp Life AIR accounts, using
 `aiosharp-cocoro-air==0.2.0`. Reading a KI-TX100EU has been confirmed with the
 standalone test script. The user observed physical power-off on v0.1.9 despite
-the cloud reporting E1004003. Other controls and v0.1.10 readback need physical
+the cloud reporting E1004003. Other controls and v0.1.11 readback need physical
 testing.
 
 ## Installation
@@ -32,10 +32,15 @@ configuration storage; never commit them to GitHub.
 Polling runs every 60 seconds. Discovery uses `setting/boxInfo`; current states
 are then fetched through `control/deviceStatus`, matching the phone app.
 Missing current fields are not filled from an older discovery snapshot.
-Version 0.1.10 also requests `control/deviceProperty` with `status=true`, as the
+Version 0.1.11 also requests `control/deviceProperty` with `status=true`, as the
 official app does, when deviceStatus lacks control fields. Only a matching
 device with a comparable timestamp at least as recent as deviceStatus can
 supply readings. A failed supplementary read preserves valid deviceStatus data.
+The response contains two sections: `property` describes supported values and
+capabilities; `status` contains live values. Version 0.1.11 fixes v0.1.10's
+incorrect parsing of `property` as current state, which caused repeated invalid
+field warnings and prevented power readback. It now decodes only `status` and
+diagnostics report definitions separately from embedded current values.
 Version 0.1.6 handles decimal range readings larger than one byte and isolates
 malformed optional status fields. Affected readings remain unknown; valid
 readings from the same response remain available. Warnings identify the field

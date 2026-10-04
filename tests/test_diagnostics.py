@@ -121,3 +121,23 @@ class DiagnosticsTests(unittest.IsolatedAsyncioTestCase):
             "requested_power":"off", "cloud_status":"error", "error_code":"E1004003",
             "state_confirmed":True, "outcome":"confirmed_by_state"})
         self.assertNotIn("private",json.dumps(result))
+
+    async def test_property_capabilities_and_embedded_status_are_summarized_separately(self):
+        device = SimpleNamespace(device_id=1, echonet_node="private-node", echonet_object="private-object")
+        response = {"deviceProperty":{"deviceId":1, "echonetNode":"private-node", "echonetObject":"private-object",
+            "propertyUpdatedAt":"2026-10-04T16:44:09", "property":[
+                {"statusCode":"80", "valueType":"valueSingle", "set":True, "get":True,
+                 "valueSingle":[{"name":"private-on", "code":"30"},{"name":"private-off", "code":"31"}]},
+                {"statusCode":"F3", "valueType":"valueBinary", "valueBinary":{"data":"private-schema"}},
+            ], "status":[
+                {"statusCode":"80", "valueType":"valueSingle", "valueSingle":{"code":"31"}},
+                {"statusCode":"F3", "valueType":"valueBinary", "valueBinary":{"code":"00"*27}},
+            ]}}
+        result = diagnostics.summarize(response,"deviceProperty",device)
+        self.assertTrue(result["fields"][0]["set"])
+        self.assertNotIn("has_value",result["fields"][0])
+        self.assertNotIn("has_value",result["fields"][1])
+        self.assertTrue(result["current_status"]["fields"][0]["has_value"])
+        self.assertEqual(result["current_status"]["fields"][1]["payload_bytes"],27)
+        self.assertNotIn("private",json.dumps(result))
+        self.assertNotIn("00"*27,json.dumps(result))
