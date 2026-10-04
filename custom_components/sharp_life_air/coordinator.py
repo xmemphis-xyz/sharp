@@ -10,6 +10,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_call_later
 
+_LOGGER = logging.getLogger(__name__)
+
 
 class SharpCoordinator(DataUpdateCoordinator):
     def __init__(self, hass, entry):
@@ -31,6 +33,10 @@ class SharpCoordinator(DataUpdateCoordinator):
         self._cancel_refresh = None
         await self.async_request_refresh()
 
+    def _schedule_refresh(self, delay=5):
+        self._cancel_followup_refresh()
+        self._cancel_refresh = async_call_later(self.hass, delay, self._followup_refresh)
+
     async def _async_update_data(self):
         async with self.lock:
             try:
@@ -43,8 +49,10 @@ class SharpCoordinator(DataUpdateCoordinator):
             except SharpAuthError as err:
                 self.authenticated = False
                 raise ConfigEntryAuthFailed("Sharp authentication expired") from err
-            except (SharpApiError, SharpConnectionError, TimeoutError) as err:
-                raise UpdateFailed("Unable to retrieve Sharp devices") from err
+            except SharpApiError as err:
+                raise UpdateFailed(f"Unable to retrieve Sharp devices: {err}") from err
+            except (SharpConnectionError, TimeoutError) as err:
+                raise UpdateFailed("Unable to retrieve Sharp devices: connection or timeout") from err
 
     async def command(self, key, method, *args):
         await self.command_many(key, [(method, *args)])
@@ -65,7 +73,14 @@ class SharpCoordinator(DataUpdateCoordinator):
                 self.authenticated = False
                 raise ConfigEntryAuthFailed("Sharp authentication expired") from err
             except (SharpApiError, SharpConnectionError, TimeoutError) as err:
-                raise HomeAssistantError("Sharp command failed; check the purifier connection and retry") from err
-        self._cancel_followup_refresh()
-        self._cancel_refresh = async_call_later(self.hass, 5, self._followup_refresh)
+                detail = str(err) if isinstance(err, SharpApiError) else (
+                    "Timed out waiting for Sharp; command outcome is unknown"
+                    if isinstance(err, TimeoutError) else "Sharp connection failed"
+                )
+                _LOGGER.warning("Sharp command %s failed: %s", method, detail)
+                # The command may have reached the device even if confirmation
+                # failed. Refresh state without repeating the write.
+                self._schedule_refresh(1)
+                raise HomeAssistantError(f"Sharp command failed: {detail}") from err
+        self._schedule_refresh()
         await self.async_request_refresh()

@@ -28,7 +28,10 @@ configuration storage; never commit them to GitHub.
   units or percentages.
 - Binary sensor: device fault.
 
-Polling runs every 60 seconds. Cloud readings may lag after commands. Available
+Polling runs every 60 seconds. Discovery uses `setting/boxInfo`; current states
+are then fetched through `control/deviceStatus`, matching the phone app.
+Missing current fields are not filled from an older discovery snapshot.
+Cloud readings may lag after commands. Available
 modes are the library's modes; not all have been verified for KI-TX100EU.
 The speed slider maps 1–33% to Silent, 34–66% to Medium, and 67–100% to High;
 these percentages represent three selectable speeds, not measured fan output.
@@ -42,6 +45,9 @@ unmatched results and timeouts raise an HA action error. Uncertain writes are
 never automatically repeated. Refresh immediately after completion and once
 more after five seconds to accommodate cloud state delay. Physical-device
 testing is still needed; a cloud result does not replace checking the purifier.
+Version 0.1.5 corrects the pinned library's F3 update masks for power, mode and
+humidification using the Life AIR 1.0.4 APK. Failures now identify the endpoint
+and cloud error code/status. An uncertain result also schedules a state refresh.
 Energy is not yet enabled for Energy Dashboard totals because counter behavior
 is unverified. No decoded PM2.5 concentration is provided by this library.
 

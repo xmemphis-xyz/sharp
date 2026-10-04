@@ -57,6 +57,50 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
                 if expected:
                     self.assertEqual(bytes.fromhex(status[0]["valueBinary"]["code"])[4], int(expected, 16))
 
+    async def test_commands_match_apk_update_bitmap(self):
+        # Golden vectors from c6.h.a/c6.a in Life AIR 1.0.4, not upstream
+        # library constants (which set additional update bits).
+        cases = (
+            ("power_on", (), "00020000000000000000000000FF00000000000000000000000000"),
+            ("power_off", (), "000200000000000000000000000000000000000000000000000000"),
+            ("set_mode", ("auto",), "010000001000000000000000000000000000000000000000000000"),
+            ("set_humidify", (True,), "000800000000000000000000000000FF0000000000000000000000"),
+            ("set_humidify", (False,), "000800000000000000000000000000000000000000000000000000"),
+        )
+        for method, args, expected in cases:
+            with self.subTest(method=method, args=args):
+                self.mock_responses(
+                    {"controlList": [{"id": "cmd", "errorCode": None}]},
+                    {"resultList": [{"id": "cmd", "status": "success"}]},
+                )
+                await getattr(self.client, method)(self.device, *args)
+                status = self.client._hms_request.call_args_list[0].kwargs["body"]["controlList"][0]["status"]
+                self.assertEqual(status[-1]["valueBinary"]["code"], expected)
+
+    async def test_rejection_exposes_error_code(self):
+        self.mock_responses({"controlList": [{"id": "cmd", "errorCode": "E123"}]})
+        with self.assertRaisesRegex(SharpApiError, "deviceControl.*E123"):
+            await self.client.power_off(self.device)
+
+    async def test_result_error_exposes_status_and_error_code(self):
+        self.mock_responses(
+            {"controlList": [{"id": "cmd", "errorCode": None}]},
+            {"resultList": [{"id": "cmd", "status": "error", "errorCode": "E456"}]},
+        )
+        with self.assertRaisesRegex(SharpApiError, "controlResult.*error.*E456"):
+            await self.client.power_off(self.device)
+
+    async def test_result_message_and_identifiers_are_not_exposed(self):
+        self.mock_responses(
+            {"controlList": [{"id": "private-command", "errorCode": None}]},
+            {"resultList": [{"id": "private-command", "status": "error",
+                             "errorCode": "private@example.invalid", "message": "secret"}]},
+        )
+        with self.assertRaises(SharpApiError) as ctx:
+            await self.client.power_off(self.device)
+        for private in ("private-command", "private@example.invalid", "secret"):
+            self.assertNotIn(private, str(ctx.exception))
+
     async def test_rejected_command_is_not_retried(self):
         self.mock_responses({"controlList": [{"id": "cmd", "errorCode": "rejected"}]})
         with self.assertRaises(SharpApiError):
