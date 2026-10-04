@@ -82,6 +82,117 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(SharpApiError, "deviceControl.*E123"):
             await self.client.power_off(self.device)
 
+    async def test_multiple_acknowledgements_are_all_confirmed(self):
+        self.mock_responses(
+            {"controlList": [{"id": "power", "errorCode": None},
+                             {"id": "f3", "errorCode": "null"}]},
+            {"resultList": [{"id": "f3", "status": "wait"},
+                            {"id": "power", "status": "success"}]},
+            {"resultList": [{"id": "f3", "status": "exec"}]},
+            {"resultList": [{"id": "f3", "status": "success"}]},
+        )
+        await self.client.power_off(self.device)
+        calls = self.client._hms_request.call_args_list
+        self.assertEqual(calls[1].kwargs["body"],
+                         {"resultList": [{"id": "power"}, {"id": "f3"}]})
+        self.assertEqual(calls[2].kwargs["body"], {"resultList": [{"id": "f3"}]})
+        self.assertEqual(calls[3].kwargs["body"], {"resultList": [{"id": "f3"}]})
+        self.assertEqual(sum(c.args[0] == "control/deviceControl" for c in calls), 1)
+
+    async def test_one_failed_batch_entry_prevents_success(self):
+        for status in ("error", "unmatch", "cancelled"):
+            with self.subTest(status=status):
+                self.mock_responses(
+                    {"controlList": [{"id": "power", "errorCode": None},
+                                     {"id": "f3", "errorCode": None}]},
+                    {"resultList": [{"id": "power", "status": "success"},
+                                    {"id": "f3", "status": status, "errorCode": "E456"}]},
+                )
+                with self.assertRaises(SharpApiError):
+                    await self.client.power_off(self.device)
+                self.assertEqual(self.client._hms_request.call_count, 2)
+
+    async def test_partly_rejected_acknowledgement_is_not_success(self):
+        self.mock_responses({"controlList": [{"id": "power", "errorCode": None},
+                                            {"id": "f3", "errorCode": "E123"}]})
+        with self.assertRaisesRegex(SharpApiError, "deviceControl.*E123"):
+            await self.client.power_off(self.device)
+        self.assertEqual(self.client._hms_request.call_count, 1)
+
+    async def test_duplicate_and_non_scalar_ids_are_rejected(self):
+        for ids in (("same", "same"), ("1", 1), ("cmd", []), ("cmd", {}), (True,)):
+            with self.subTest(ids=ids):
+                self.mock_responses({"controlList": [{"id": value, "errorCode": None}
+                                                    for value in ids]})
+                with self.assertRaises(SharpApiError):
+                    await self.client.power_off(self.device)
+                self.assertEqual(self.client._hms_request.call_count, 1)
+
+    async def test_missing_extra_and_duplicate_batch_results_are_rejected(self):
+        for items in ([{"id": "power", "status": "success"}],
+                      [{"id": "power", "status": "success"},
+                       {"id": "other", "status": "success"}],
+                      [{"id": "power", "status": "success"},
+                       {"id": "power", "status": "success"}],
+                      [None, {"id": "f3", "status": "success"}]):
+            with self.subTest(items=items):
+                self.mock_responses(
+                    {"controlList": [{"id": "power", "errorCode": None},
+                                     {"id": "f3", "errorCode": None}]},
+                    {"resultList": items},
+                )
+                with self.assertRaises(SharpApiError):
+                    await self.client.power_off(self.device)
+
+    async def test_invalid_acknowledgement_reports_safe_structure(self):
+        responses = (
+            ({"private-account": "secret"}, "controlList=missing"),
+            ({"controlList": []}, "controlList=list; count=0"),
+            ({"controlList": "secret"}, "controlList=str"),
+            (["private-device"], "response=list"),
+        )
+        for response, expected in responses:
+            with self.subTest(response=response):
+                self.mock_responses(response)
+                with self.assertRaises(SharpApiError) as ctx:
+                    await self.client.power_off(self.device)
+                self.assertIn("deviceControl: invalid acknowledgement", str(ctx.exception))
+                self.assertIn(expected, str(ctx.exception))
+                for private in ("private-account", "secret", "private-device"):
+                    self.assertNotIn(private, str(ctx.exception))
+
+    async def test_timeout_after_partial_success_does_not_repeat_write(self):
+        self.mock_responses(
+            {"controlList": [{"id": "power", "errorCode": None},
+                             {"id": "f3", "errorCode": None}]},
+            {"resultList": [{"id": "power", "status": "success"},
+                            {"id": "f3", "status": "wait"}]},
+            TimeoutError(),
+        )
+        with self.assertRaises(TimeoutError):
+            await self.client.power_off(self.device)
+        self.assertEqual(sum(c.args[0] == "control/deviceControl"
+                             for c in self.client._hms_request.call_args_list), 1)
+
+    async def test_top_level_error_reports_only_protocol_code(self):
+        for code, expected in (("E1001001", "E1001001"),
+                               ("private@example.invalid", "unknown")):
+            self.mock_responses({"errorCode": code, "message": "private-response"})
+            with self.assertRaises(SharpApiError) as ctx:
+                await self.client.power_off(self.device)
+            self.assertIn("errorCode=" + expected, str(ctx.exception))
+            self.assertNotIn("private", str(ctx.exception))
+            self.assertEqual(self.client._hms_request.call_count, 1)
+
+    async def test_scalar_ids_match_android_string_conversion(self):
+        self.mock_responses(
+            {"controlList": [{"id": 123, "errorCode": None}]},
+            {"resultList": [{"id": "123", "status": "success"}]},
+        )
+        await self.client.power_off(self.device)
+        self.assertEqual(self.client._hms_request.call_args_list[1].kwargs["body"],
+                         {"resultList": [{"id": 123}]})
+
     async def test_result_error_exposes_status_and_error_code(self):
         self.mock_responses(
             {"controlList": [{"id": "cmd", "errorCode": None}]},

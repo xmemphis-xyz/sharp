@@ -17,6 +17,36 @@ def error_code(value):
     return code if re.fullmatch(r"[A-Za-z0-9_-]{1,32}", code) else "unknown"
 
 
+def response_shape(response, field):
+    """Describe only a known field's structure, never response data or keys."""
+    def kind(value):
+        return type(value).__name__ if type(value) in (
+            dict, list, str, int, float, bool, type(None)
+        ) else "unknown"
+
+    shape = f"response={kind(response)}"
+    if isinstance(response, dict) and "errorCode" in response:
+        code = response["errorCode"]
+        safe = str(code) if re.fullmatch(r"(?:E[0-9]{7}|[0-9]{3}|null)", str(code)) else "unknown"
+        shape += f"; errorCode={safe}"
+    if not isinstance(response, dict) or field not in response:
+        return f"{shape}; {field}=missing"
+    value = response[field]
+    shape += f"; {field}={kind(value)}"
+    if isinstance(value, list):
+        shape += f"; count={len(value)}"
+    return shape
+
+
+def command_identifier(item, endpoint="deviceControl"):
+    """Accept JSON scalar IDs, as Android getString does, without logging them."""
+    value = item.get("id") if isinstance(item, dict) else None
+    if (not isinstance(value, (str, int)) or isinstance(value, bool)
+            or not str(value).strip() or len(str(value)) > 512):
+        raise SharpApiError(f"{endpoint}: missing or invalid command identifier")
+    return value
+
+
 def f3_control(index: int, value: int) -> dict:
     """Build c6.h.a's four-byte update bitmap and 23-byte data payload.
 
@@ -188,36 +218,50 @@ class SharpLifeAirClient(SharpCOCOROAir):
         """
         response = await super()._send_device_control(device, status_list)
         controls = response.get("controlList") if isinstance(response, dict) else None
-        if not isinstance(controls, list) or len(controls) != 1:
-            raise SharpApiError("Invalid Sharp command acknowledgement")
-        control = controls[0]
-        if (not isinstance(control, dict) or "errorCode" not in control
-                or control.get("errorCode") not in (None, "null", "")):
-            code = error_code(control.get("errorCode")) if isinstance(control, dict) else "unknown"
-            raise SharpApiError(f"deviceControl: rejected command (errorCode={code})")
-        command_id = control.get("id")
-        if not command_id:
-            raise SharpApiError("Sharp did not return a command identifier")
+        if not isinstance(controls, list) or not controls:
+            raise SharpApiError("deviceControl: invalid acknowledgement (" +
+                                response_shape(response, "controlList") + ")")
+        # The APK's acknowledgement decoder accepts a list, and its result
+        # endpoint accepts a list of IDs. Do not impose a single-entry limit;
+        # conservatively require completion of every ID returned by this POST.
+        pending = {}
+        for control in controls:
+            if (not isinstance(control, dict) or "errorCode" not in control
+                    or control.get("errorCode") not in (None, "null", "")):
+                code = error_code(control.get("errorCode")) if isinstance(control, dict) else "unknown"
+                raise SharpApiError(f"deviceControl: rejected command (errorCode={code})")
+            command_id = command_identifier(control)
+            identity = str(command_id)
+            if identity in pending:
+                raise SharpApiError("deviceControl: duplicate command identifiers")
+            pending[identity] = command_id
         async with asyncio.timeout(30):
             await asyncio.sleep(2)
             while True:
                 result = await self._hms_request(
                     "control/controlResult", method="POST",
-                    body={"resultList": [{"id": command_id}]},
+                    body={"resultList": [{"id": command_id} for command_id in pending.values()]},
                     extra_params={"boxId": device.box_id},
                 )
                 results = result.get("resultList") if isinstance(result, dict) else None
-                if not isinstance(results, list) or len(results) != 1:
-                    raise SharpApiError("Invalid Sharp command result")
-                item = results[0]
-                if not isinstance(item, dict) or str(item.get("id")) != str(command_id):
-                    raise SharpApiError("Mismatched Sharp command result")
-                state = item.get("status")
-                if state == "success":
+                if not isinstance(results, list) or len(results) != len(pending):
+                    raise SharpApiError("controlResult: invalid result (" +
+                                        response_shape(result, "resultList") + ")")
+                matched = {}
+                for item in results:
+                    identity = str(command_identifier(item, "controlResult"))
+                    if identity not in pending or identity in matched:
+                        raise SharpApiError("controlResult: mismatched command identifiers")
+                    matched[identity] = item
+                for identity, item in matched.items():
+                    state = item.get("status")
+                    if state == "success":
+                        del pending[identity]
+                    elif state == "unmatch":
+                        raise SharpApiError("controlResult: unmatch; requested state was not confirmed")
+                    elif state not in ("wait", "exec"):
+                        raise SharpApiError(f"controlResult: status={error_code(state)}, "
+                                            f"errorCode={error_code(item.get('errorCode'))}")
+                if not pending:
                     return response
-                if state == "unmatch":
-                    raise SharpApiError("controlResult: unmatch; requested state was not confirmed")
-                if state not in ("wait", "exec"):
-                    raise SharpApiError(f"controlResult: status={error_code(state)}, "
-                                        f"errorCode={error_code(item.get('errorCode'))}")
                 await asyncio.sleep(1)

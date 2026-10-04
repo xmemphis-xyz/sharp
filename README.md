@@ -49,6 +49,11 @@ unmatched results and timeouts raise an HA action error. Uncertain writes are
 never automatically repeated. Refresh immediately after completion and once
 more after five seconds to accommodate cloud state delay. Physical-device
 testing is still needed; a cloud result does not replace checking the purifier.
+Version 0.1.7 accepts multiple acknowledgement entries and requires every
+returned ID to complete. Malformed acknowledgements now identify the endpoint,
+response/list type, entry count and a recognized protocol error code, without
+logging raw data or identifiers. The reported KI-TX100EU failure did not expose
+the actual response structure, so on-device confirmation is still required.
 Version 0.1.5 corrects the pinned library's F3 update masks for power, mode and
 humidification using the Life AIR 1.0.4 APK. Failures now identify the endpoint
 and cloud error code/status. An uncertain result also schedules a state refresh.

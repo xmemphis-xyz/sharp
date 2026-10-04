@@ -1,23 +1,13 @@
-Sharp Life AIR 0.1.6 fixes deviceStatus parsing after the 0.1.5 update.
+Sharp Life AIR 0.1.7 removes a restrictive command acknowledgement check and adds safe diagnostics for the reported fan.turn_off failure.
 
-Decimal valueRange readings above 255 are now supported. Null/empty codes and
-integer JSON single-value codes are handled. Each field is decoded separately,
-so a malformed optional field no longer blocks setup or discards other valid
-readings. An invalid field stays unknown and produces a warning with its field
-code and value type, without raw data or device/account identifiers.
+Previously, the adapter required exactly one controlList entry and otherwise raised "Invalid Sharp command acknowledgement". The APK acknowledgement decoder accepts a list, and controlResult accepts a list of command IDs. The adapter now validates all returned entries and polls every accepted ID, reporting success only after all complete. IDs already confirmed are removed from subsequent polling.
 
-Malformed top-level responses, mismatched device identity and replies containing
-only invalid fields still fail rather than presenting cached data as current.
-The command-mask corrections and deviceStatus retrieval from 0.1.5 are retained.
+Partial rejection, duplicate or malformed IDs, missing or unrelated results, unmatch and timeout remain failures. The original command POST is never automatically repeated. State is refreshed after uncertain outcomes.
 
-Update to 0.1.6 in HACS and restart Home Assistant. Keep the existing integration
-configuration. Check that setup completes, compare humidity with the purifier,
-and test power and humidification. If fields remain unknown, send warnings
-beginning with deviceStatus: ignored invalid field. For control failures send
-the command error containing deviceControl or controlResult.
+If an acknowledgement is still invalid, the error now includes deviceControl, the response type, the known list field's type/count and a recognized top-level protocol errorCode when present. No raw cloud payloads, tokens or device/command identifiers are included.
 
-29 regression tests pass. The reported screenshot confirms a parser error but
-does not identify the exact raw field. Operation on the physical purifier still
-needs confirmation.
+Update to 0.1.7 in HACS, restart Home Assistant, keep the existing configuration and try turning the purifier off once. Confirm the physical device turns off. If it fails, send the full new error beginning with deviceControl or controlResult.
+
+38 regression tests pass, including multiple acknowledgements, mixed success/wait/error, duplicate/missing/unrelated IDs, partial-success timeout and diagnostic privacy. The user's log proves the previous acknowledgement validation failed but does not reveal the response structure. Multiple entries are a possible cause; physical testing is still required.
 
 For manual installation, extract sharp_life_air.zip into /config.

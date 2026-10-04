@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.7
+
+- Remove the single-entry limit on deviceControl acknowledgements. Accept a
+  nonempty list, validate every entry and confirm every returned command ID.
+  Poll only the IDs still waiting; success requires all IDs to complete.
+- Keep duplicate/malformed IDs, partial rejection, missing or unrelated results,
+  unmatch and timeout as errors. Never repeat an uncertain deviceControl POST.
+- Replace the generic "Invalid Sharp command acknowledgement" error with the
+  endpoint and a safe description of the response structure. Include only a
+  recognized top-level protocol errorCode, never raw response data or IDs.
+
+38 regression tests pass. The reported error establishes that the old list
+validation failed, but not whether controlList was absent, empty or had more
+than one entry. Multiple-entry handling removes an unnecessary restriction;
+the added diagnostics identify other response problems. Physical power-off
+success still needs confirmation on KI-TX100EU.
+
 ## 0.1.6
 
 - Fix the 0.1.5 deviceStatus parser's single-byte limit on decimal range
